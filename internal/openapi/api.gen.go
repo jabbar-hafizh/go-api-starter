@@ -11,13 +11,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -87,6 +90,69 @@ const (
 func (e TokenPairTokenType) Valid() bool {
 	switch e {
 	case Bearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ClientPlatform.
+const (
+	ClientPlatformAndroid ClientPlatform = "android"
+	ClientPlatformIos     ClientPlatform = "ios"
+	ClientPlatformWeb     ClientPlatform = "web"
+)
+
+// Valid indicates whether the value is a known member of the ClientPlatform enum.
+func (e ClientPlatform) Valid() bool {
+	switch e {
+	case ClientPlatformAndroid:
+		return true
+	case ClientPlatformIos:
+		return true
+	case ClientPlatformWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LoginUserParamsXClientPlatform.
+const (
+	LoginUserParamsXClientPlatformAndroid LoginUserParamsXClientPlatform = "android"
+	LoginUserParamsXClientPlatformIos     LoginUserParamsXClientPlatform = "ios"
+	LoginUserParamsXClientPlatformWeb     LoginUserParamsXClientPlatform = "web"
+)
+
+// Valid indicates whether the value is a known member of the LoginUserParamsXClientPlatform enum.
+func (e LoginUserParamsXClientPlatform) Valid() bool {
+	switch e {
+	case LoginUserParamsXClientPlatformAndroid:
+		return true
+	case LoginUserParamsXClientPlatformIos:
+		return true
+	case LoginUserParamsXClientPlatformWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RefreshSessionParamsXClientPlatform.
+const (
+	RefreshSessionParamsXClientPlatformAndroid RefreshSessionParamsXClientPlatform = "android"
+	RefreshSessionParamsXClientPlatformIos     RefreshSessionParamsXClientPlatform = "ios"
+	RefreshSessionParamsXClientPlatformWeb     RefreshSessionParamsXClientPlatform = "web"
+)
+
+// Valid indicates whether the value is a known member of the RefreshSessionParamsXClientPlatform enum.
+func (e RefreshSessionParamsXClientPlatform) Valid() bool {
+	switch e {
+	case RefreshSessionParamsXClientPlatformAndroid:
+		return true
+	case RefreshSessionParamsXClientPlatformIos:
+		return true
+	case RefreshSessionParamsXClientPlatformWeb:
 		return true
 	default:
 		return false
@@ -213,6 +279,13 @@ type ReadinessStatus struct {
 // ReadinessStatusStatus defines model for ReadinessStatus.Status.
 type ReadinessStatusStatus string
 
+// RefreshRequest defines model for RefreshRequest.
+type RefreshRequest struct {
+	// RefreshToken For clients that hold the token themselves. Web clients omit it
+	// because the cookie carries it.
+	RefreshToken *string `json:"refresh_token,omitempty"`
+}
+
 // RegisterRequest defines model for RegisterRequest.
 type RegisterRequest struct {
 	// Email Example: someone@example.com
@@ -237,8 +310,12 @@ type TokenPair struct {
 	// ExpiresIn Seconds until the access token expires.
 	//
 	// Example: 900
-	ExpiresIn int                `json:"expires_in"`
-	TokenType TokenPairTokenType `json:"token_type"`
+	ExpiresIn int `json:"expires_in"`
+
+	// RefreshToken Absent for web clients: they receive it in an httpOnly cookie
+	// instead, which a script cannot read.
+	RefreshToken *string            `json:"refresh_token,omitempty"`
+	TokenType    TokenPairTokenType `json:"token_type"`
 }
 
 // TokenPairTokenType defines model for TokenPair.TokenType.
@@ -248,6 +325,12 @@ type TokenPairTokenType string
 type VerifyEmailRequest struct {
 	Token string `json:"token"`
 }
+
+// ClientPlatform defines model for ClientPlatform.
+type ClientPlatform string
+
+// RefreshCookie defines model for RefreshCookie.
+type RefreshCookie = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -267,8 +350,47 @@ type Unauthorized = Error
 // ValidationFailed defines model for ValidationFailed.
 type ValidationFailed = Error
 
+// LoginUserParams defines parameters for LoginUser.
+type LoginUserParams struct {
+	// XClientPlatform Decides how the refresh token is delivered. "web" gets it in an
+	// httpOnly cookie and never in the response body, so a script cannot read
+	// it. Anything else gets it in the body to put in secure storage.
+	XClientPlatform *LoginUserParamsXClientPlatform `json:"X-Client-Platform,omitempty"`
+}
+
+// LoginUserParamsXClientPlatform defines parameters for LoginUser.
+type LoginUserParamsXClientPlatform string
+
+// LogoutParams defines parameters for Logout.
+type LogoutParams struct {
+	// RefreshToken Where web clients carry the refresh token. Declared here so the cookie
+	// is part of the contract rather than an undocumented side channel.
+	RefreshToken *RefreshCookie `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
+}
+
+// RefreshSessionParams defines parameters for RefreshSession.
+type RefreshSessionParams struct {
+	// XClientPlatform Decides how the refresh token is delivered. "web" gets it in an
+	// httpOnly cookie and never in the response body, so a script cannot read
+	// it. Anything else gets it in the body to put in secure storage.
+	XClientPlatform *RefreshSessionParamsXClientPlatform `json:"X-Client-Platform,omitempty"`
+
+	// RefreshToken Where web clients carry the refresh token. Declared here so the cookie
+	// is part of the contract rather than an undocumented side channel.
+	RefreshToken *RefreshCookie `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
+}
+
+// RefreshSessionParamsXClientPlatform defines parameters for RefreshSession.
+type RefreshSessionParamsXClientPlatform string
+
 // LoginUserJSONRequestBody defines body for LoginUser for application/json ContentType.
 type LoginUserJSONRequestBody = LoginRequest
+
+// LogoutJSONRequestBody defines body for Logout for application/json ContentType.
+type LogoutJSONRequestBody = RefreshRequest
+
+// RefreshSessionJSONRequestBody defines body for RefreshSession for application/json ContentType.
+type RefreshSessionJSONRequestBody = RefreshRequest
 
 // RegisterUserJSONRequestBody defines body for RegisterUser for application/json ContentType.
 type RegisterUserJSONRequestBody = RegisterRequest
@@ -289,7 +411,13 @@ type ServerInterface interface {
 	GetReadyz(w http.ResponseWriter, r *http.Request)
 	// LoginUser Exchange email and password for an access token
 	// (POST /v1/auth/login)
-	LoginUser(w http.ResponseWriter, r *http.Request)
+	LoginUser(w http.ResponseWriter, r *http.Request, params LoginUserParams)
+	// Logout End the session
+	// (POST /v1/auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
+	// RefreshSession Rotate the refresh token and get a new access token
+	// (POST /v1/auth/refresh)
+	RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams)
 	// RegisterUser Create an account with an email and password
 	// (POST /v1/auth/register)
 	RegisterUser(w http.ResponseWriter, r *http.Request)
@@ -344,8 +472,126 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 // LoginUser operation middleware
 func (siw *ServerInterfaceWrapper) LoginUser(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LoginUserParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Client-Platform" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Platform")]; found {
+		var XClientPlatform LoginUserParamsXClientPlatform
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Platform", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Platform", valueList[0], &XClientPlatform, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Platform", Err: err})
+			return
+		}
+
+		params.XClientPlatform = &XClientPlatform
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.LoginUser(w, r)
+		siw.Handler.LoginUser(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LogoutParams
+
+	{
+		var cookie *http.Cookie
+
+		if cookie, err = r.Cookie("refresh_token"); err == nil {
+			var value RefreshCookie
+			err = runtime.BindStyledParameterWithOptions("simple", "refresh_token", cookie.Value, &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationCookie, Explode: true, Required: false, Type: "string", Format: ""})
+			if err != nil {
+				siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "refresh_token", Err: err})
+				return
+			}
+			params.RefreshToken = &value
+
+		}
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshSession operation middleware
+func (siw *ServerInterfaceWrapper) RefreshSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RefreshSessionParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Client-Platform" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Platform")]; found {
+		var XClientPlatform RefreshSessionParamsXClientPlatform
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Platform", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Platform", valueList[0], &XClientPlatform, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Platform", Err: err})
+			return
+		}
+
+		params.XClientPlatform = &XClientPlatform
+
+	}
+
+	{
+		var cookie *http.Cookie
+
+		if cookie, err = r.Cookie("refresh_token"); err == nil {
+			var value RefreshCookie
+			err = runtime.BindStyledParameterWithOptions("simple", "refresh_token", cookie.Value, &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationCookie, Explode: true, Required: false, Type: "string", Format: ""})
+			if err != nil {
+				siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "refresh_token", Err: err})
+				return
+			}
+			params.RefreshToken = &value
+
+		}
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshSession(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -533,6 +779,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/register", wrapper.RegisterUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.LoginUser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/verify-email", wrapper.VerifyEmail)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calculations", wrapper.Calculate)
@@ -611,7 +859,8 @@ func (response GetReadyz503JSONResponse) VisitGetReadyzResponse(w http.ResponseW
 }
 
 type LoginUserRequestObject struct {
-	Body *LoginUserJSONRequestBody
+	Params LoginUserParams
+	Body   *LoginUserJSONRequestBody
 }
 
 type LoginUserResponseObject interface {
@@ -684,6 +933,74 @@ func (response LoginUser429JSONResponse) VisitLoginUserResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutRequestObject struct {
+	Params LogoutParams
+	Body   *LogoutJSONRequestBody
+}
+
+type LogoutResponseObject interface {
+	VisitLogoutResponse(w http.ResponseWriter) error
+}
+
+type Logout204Response struct {
+}
+
+func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RefreshSessionRequestObject struct {
+	Params RefreshSessionParams
+	Body   *RefreshSessionJSONRequestBody
+}
+
+type RefreshSessionResponseObject interface {
+	VisitRefreshSessionResponse(w http.ResponseWriter) error
+}
+
+type RefreshSession200JSONResponse TokenPair
+
+func (response RefreshSession200JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RefreshSession400JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSession401JSONResponse Error
+
+func (response RefreshSession401JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -906,6 +1223,12 @@ type StrictServerInterface interface {
 	// LoginUser Exchange email and password for an access token
 	// (POST /v1/auth/login)
 	LoginUser(ctx context.Context, request LoginUserRequestObject) (LoginUserResponseObject, error)
+	// Logout End the session
+	// (POST /v1/auth/logout)
+	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
+	// RefreshSession Rotate the refresh token and get a new access token
+	// (POST /v1/auth/refresh)
+	RefreshSession(ctx context.Context, request RefreshSessionRequestObject) (RefreshSessionResponseObject, error)
 	// RegisterUser Create an account with an email and password
 	// (POST /v1/auth/register)
 	RegisterUser(ctx context.Context, request RegisterUserRequestObject) (RegisterUserResponseObject, error)
@@ -1008,8 +1331,10 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 // LoginUser operation middleware
-func (sh *strictHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) LoginUser(w http.ResponseWriter, r *http.Request, params LoginUserParams) {
 	var request LoginUserRequestObject
+
+	request.Params = params
 
 	var body LoginUserJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1031,6 +1356,78 @@ func (sh *strictHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(LoginUserResponseObject); ok {
 		if err := validResponse.VisitLoginUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Logout operation middleware
+func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request, params LogoutParams) {
+	var request LogoutRequestObject
+
+	request.Params = params
+
+	var body LogoutJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Logout(ctx, request.(LogoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Logout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutResponseObject); ok {
+		if err := validResponse.VisitLogoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshSession operation middleware
+func (sh *strictHandler) RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams) {
+	var request RefreshSessionRequestObject
+
+	request.Params = params
+
+	var body RefreshSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshSession(ctx, request.(RefreshSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshSessionResponseObject); ok {
+		if err := validResponse.VisitRefreshSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1160,48 +1557,60 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"C9tlOfYsOmrA2H7YQeDqZvWfAQA=",
+	"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",
+	"3ny8+e8A",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

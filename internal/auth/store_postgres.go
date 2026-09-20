@@ -103,3 +103,54 @@ func toUser(row gen.User) User {
 		CreatedAt:       row.CreatedAt,
 	}
 }
+
+func (s *PostgresStore) CreateRefreshToken(ctx context.Context, t RefreshToken) error {
+	var platform *string
+	if t.Platform != "" {
+		platform = &t.Platform
+	}
+
+	err := s.q.CreateRefreshToken(ctx, gen.CreateRefreshTokenParams{
+		ID:             t.ID,
+		UserID:         t.UserID,
+		TokenHash:      t.TokenHash,
+		FamilyID:       t.FamilyID,
+		ClientPlatform: platform,
+		ExpiresAt:      t.ExpiresAt,
+	})
+	if err != nil {
+		return fmt.Errorf("create refresh token: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UseRefreshToken(ctx context.Context, tokenHash []byte) (RefreshTokenUse, error) {
+	row, err := s.q.UseRefreshToken(ctx, tokenHash)
+	if err != nil {
+		// No row means unknown, expired, revoked or already spent. Which one
+		// it was is decided by the caller reading the row separately.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshTokenUse{}, ErrRefreshInvalid
+		}
+		return RefreshTokenUse{}, fmt.Errorf("use refresh token: %w", err)
+	}
+	return RefreshTokenUse{UserID: row.UserID, FamilyID: row.FamilyID}, nil
+}
+
+func (s *PostgresStore) RefreshTokenByHash(ctx context.Context, tokenHash []byte) (RefreshTokenStatus, error) {
+	row, err := s.q.RefreshTokenByHash(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshTokenStatus{}, ErrRefreshInvalid
+		}
+		return RefreshTokenStatus{}, fmt.Errorf("refresh token by hash: %w", err)
+	}
+	return RefreshTokenStatus{FamilyID: row.FamilyID, UsedAt: row.UsedAt}, nil
+}
+
+func (s *PostgresStore) RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error {
+	if err := s.q.RevokeRefreshFamily(ctx, familyID); err != nil {
+		return fmt.Errorf("revoke refresh family: %w", err)
+	}
+	return nil
+}

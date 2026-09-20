@@ -64,6 +64,8 @@ paths:
       operationId: loginUser
       summary: Exchange email and password for an access token
       security: []
+      parameters:
+        - $ref: "#/components/parameters/ClientPlatform"
       requestBody:
         required: true
         content:
@@ -89,6 +91,66 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshSession
+      summary: Rotate the refresh token and get a new access token
+      description: |
+        Every refresh mints a new token and spends the old one. Presenting a
+        token that was already spent means two parties hold it, so the entire
+        rotation chain is revoked and the session ends.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ClientPlatform"
+        - $ref: "#/components/parameters/RefreshCookie"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: |
+            Rotated. Web clients get the new refresh token in an httpOnly
+            cookie and never in the body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: |
+            Unknown, expired, revoked or already spent. The four are one answer
+            so a client cannot probe for valid tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the session
+      description: |
+        Revokes the whole rotation chain, not just the token presented, so a
+        copy taken earlier in the chain is dead too. Always succeeds: a client
+        that wants out must never be told it is still signed in.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RefreshCookie"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Session ended
 
   /v1/auth/verify-email:
     post:
@@ -184,6 +246,29 @@ paths:
                 $ref: "#/components/schemas/ReadinessStatus"
 
 components:
+  parameters:
+    RefreshCookie:
+      name: refresh_token
+      in: cookie
+      required: false
+      description: |
+        Where web clients carry the refresh token. Declared here so the cookie
+        is part of the contract rather than an undocumented side channel.
+      schema:
+        type: string
+
+    ClientPlatform:
+      name: X-Client-Platform
+      in: header
+      required: false
+      description: |
+        Decides how the refresh token is delivered. "web" gets it in an
+        httpOnly cookie and never in the response body, so a script cannot read
+        it. Anything else gets it in the body to put in secure storage.
+      schema:
+        type: string
+        enum: [web, ios, android]
+
   securitySchemes:
     bearerAuth:
       type: http
@@ -295,6 +380,20 @@ components:
           type: integer
           description: Seconds until the access token expires.
           example: 900
+        refresh_token:
+          type: string
+          description: |
+            Absent for web clients: they receive it in an httpOnly cookie
+            instead, which a script cannot read.
+
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: |
+            For clients that hold the token themselves. Web clients omit it
+            because the cookie carries it.
 
     Me:
       type: object

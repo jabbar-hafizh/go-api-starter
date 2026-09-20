@@ -17,10 +17,10 @@ import (
 
 const (
 	purposeEmailVerify = "email_verify"
-	// verificationTokenBytes is the entropy in a link token. 32 bytes is far
-	// past anything guessable and keeps the URL short enough to survive email
-	// clients that wrap lines.
-	verificationTokenBytes = 32
+	// opaqueTokenBytes is the entropy in a verification link or refresh token.
+	// 32 bytes is far past anything guessable and keeps a link short enough to
+	// survive email clients that wrap lines.
+	opaqueTokenBytes = 32
 )
 
 // store is declared here, by the code that uses it, and lists only the methods
@@ -31,6 +31,10 @@ type store interface {
 	UserByID(ctx context.Context, id uuid.UUID) (User, error)
 	CreateVerificationToken(ctx context.Context, t VerificationToken) error
 	ConsumeEmailVerification(ctx context.Context, tokenHash []byte) (uuid.UUID, error)
+	CreateRefreshToken(ctx context.Context, t RefreshToken) error
+	UseRefreshToken(ctx context.Context, tokenHash []byte) (RefreshTokenUse, error)
+	RefreshTokenByHash(ctx context.Context, tokenHash []byte) (RefreshTokenStatus, error)
+	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 }
 
 // Mailer delivers the transactional emails this package sends.
@@ -48,13 +52,23 @@ type VerificationToken struct {
 	ExpiresAt time.Time
 }
 
+// Config carries the lifetimes this package needs. A struct rather than five
+// positional arguments, so a caller cannot silently swap two durations.
+type Config struct {
+	EmailTokenTTL    time.Duration
+	RefreshTTLWeb    time.Duration
+	RefreshTTLMobile time.Duration
+}
+
 // Service holds the account use cases.
 type Service struct {
-	store    store
-	issuer   token.Issuer
-	mailer   Mailer
-	emailTTL time.Duration
-	now      func() time.Time
+	store            store
+	issuer           token.Issuer
+	mailer           Mailer
+	emailTTL         time.Duration
+	refreshTTLWeb    time.Duration
+	refreshTTLMobile time.Duration
+	now              func() time.Time
 }
 
 // ServiceOption configures a Service.
@@ -66,17 +80,26 @@ func WithClock(now func() time.Time) ServiceOption {
 }
 
 // NewService wires the account use cases.
-func NewService(st store, issuer token.Issuer, mailer Mailer, emailTTL time.Duration, opts ...ServiceOption) *Service {
-	s := &Service{store: st, issuer: issuer, mailer: mailer, emailTTL: emailTTL, now: time.Now}
+func NewService(st store, issuer token.Issuer, mailer Mailer, cfg Config, opts ...ServiceOption) *Service {
+	s := &Service{
+		store:            st,
+		issuer:           issuer,
+		mailer:           mailer,
+		emailTTL:         cfg.EmailTokenTTL,
+		refreshTTLWeb:    cfg.RefreshTTLWeb,
+		refreshTTLMobile: cfg.RefreshTTLMobile,
+		now:              time.Now,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
 }
 
-// newVerificationToken returns the plaintext to email and the hash to store.
-func newVerificationToken() (plain string, hash []byte, err error) {
-	raw := make([]byte, verificationTokenBytes)
+// newOpaqueToken returns the plaintext to hand out and the hash to store. Used
+// for both verification links and refresh tokens: same shape, same handling.
+func newOpaqueToken() (plain string, hash []byte, err error) {
+	raw := make([]byte, opaqueTokenBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, fmt.Errorf("read random: %w", err)
 	}

@@ -33,6 +33,11 @@ var publicPaths = map[string]struct{}{
 	"/v1/auth/register":     {},
 	"/v1/auth/login":        {},
 	"/v1/auth/verify-email": {},
+	// These two authenticate with the refresh token, not the access token, so
+	// they must not require a bearer: the whole point is that the access token
+	// has already expired.
+	"/v1/auth/refresh": {},
+	"/v1/auth/logout":  {},
 }
 
 // Each feature names its handler Handler, which is right inside that package
@@ -88,12 +93,20 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		auth.NewPostgresStore(pool),
 		signer,
 		mailer.NewLog(),
-		cfg.Auth.EmailTokenTTL,
+		auth.Config{
+			EmailTokenTTL:    cfg.Auth.EmailTokenTTL,
+			RefreshTTLWeb:    cfg.Auth.RefreshTokenTTLWeb,
+			RefreshTTLMobile: cfg.Auth.RefreshTokenTTLMobile,
+		},
 	)
+
+	// Browsers drop Secure cookies over plain HTTP, so local development would
+	// silently never receive one.
+	secureCookies := cfg.App.Env != config.EnvLocal
 
 	srv := &Server{
 		healthAPI:     healthAPI{health.NewHandler(pool)},
-		authAPI:       authAPI{auth.NewHandler(authSvc)},
+		authAPI:       authAPI{auth.NewHandler(authSvc, secureCookies)},
 		calculatorAPI: calculatorAPI{calculator.NewHandler()},
 	}
 	httpSrv := newHTTPServer(cfg.HTTP, srv, signer)

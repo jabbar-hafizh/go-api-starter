@@ -65,6 +65,10 @@ type Auth struct {
 	AccessTokenTTL time.Duration
 	// EmailTokenTTL covers verification and password reset links.
 	EmailTokenTTL time.Duration
+	// Refresh lifetimes differ by client: a phone user will not accept signing
+	// in again every week, a browser session should not last a month.
+	RefreshTokenTTLWeb    time.Duration
+	RefreshTokenTTLMobile time.Duration
 }
 
 // minJWTSecretLen matches the HMAC-SHA256 block size. A shorter secret is
@@ -98,6 +102,9 @@ func Load(getenv func(string) string) (Config, error) {
 			JWTKeyID:       p.str(getenv, "JWT_KEY_ID", "k1"),
 			AccessTokenTTL: p.duration(getenv, "ACCESS_TOKEN_TTL", 15*time.Minute),
 			EmailTokenTTL:  p.duration(getenv, "EMAIL_TOKEN_TTL", 24*time.Hour),
+
+			RefreshTokenTTLWeb:    p.duration(getenv, "REFRESH_TOKEN_TTL_WEB", 7*24*time.Hour),
+			RefreshTokenTTLMobile: p.duration(getenv, "REFRESH_TOKEN_TTL_MOBILE", 30*24*time.Hour),
 		},
 	}
 

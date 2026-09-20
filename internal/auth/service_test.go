@@ -94,17 +94,19 @@ func TestLogin(t *testing.T) {
 
 	// Unverified accounts are refused, and only after the password checks out
 	// so this cannot be used to probe which addresses exist.
-	_, err = svc.Login(ctx, "jabbar@example.com", goodPassword)
+	_, err = svc.Login(ctx, "jabbar@example.com", goodPassword, auth.PlatformWeb)
 	require.ErrorIs(t, err, auth.ErrEmailNotVerified)
 
 	require.NoError(t, svc.VerifyEmail(ctx, mail.lastToken))
 
-	access, err := svc.Login(ctx, "jabbar@example.com", goodPassword)
+	session, err := svc.Login(ctx, "jabbar@example.com", goodPassword, auth.PlatformWeb)
 	require.NoError(t, err)
-	require.NotEmpty(t, access.Value)
-	require.Equal(t, 15*time.Minute, access.ExpiresIn)
+	require.NotEmpty(t, session.Access.Value)
+	require.Equal(t, 15*time.Minute, session.Access.ExpiresIn)
+	require.NotEmpty(t, session.RefreshToken)
+	require.Equal(t, 7*24*time.Hour, session.RefreshTTL)
 
-	claims, err := store.verifier.Verify(access.Value)
+	claims, err := store.verifier.Verify(session.Access.Value)
 	require.NoError(t, err)
 	require.Equal(t, store.byEmail["jabbar@example.com"].ID, claims.UserID)
 }
@@ -133,7 +135,7 @@ func TestLoginFailuresAreIndistinguishable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := svc.Login(ctx, tt.email, tt.password)
+			_, err := svc.Login(ctx, tt.email, tt.password, auth.PlatformWeb)
 			require.ErrorIs(t, err, auth.ErrInvalidCredentials)
 		})
 	}
@@ -162,7 +164,9 @@ func TestVerifyEmailRejectsExpiredToken(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	store := newFakeStore()
 	mail := &fakeMailer{}
-	svc := auth.NewService(store, store.issuer, mail, time.Hour, auth.WithClock(func() time.Time { return now }))
+	cfg := testConfig()
+	cfg.EmailTokenTTL = time.Hour
+	svc := auth.NewService(store, store.issuer, mail, cfg, auth.WithClock(func() time.Time { return now }))
 
 	_, err := svc.Register(context.Background(), "jabbar@example.com", goodPassword)
 	require.NoError(t, err)
@@ -197,7 +201,15 @@ func newService(t *testing.T) (*auth.Service, *fakeStore, *fakeMailer) {
 
 	store := newFakeStore()
 	mail := &fakeMailer{}
-	return auth.NewService(store, store.issuer, mail, 24*time.Hour), store, mail
+	return auth.NewService(store, store.issuer, mail, testConfig()), store, mail
+}
+
+func testConfig() auth.Config {
+	return auth.Config{
+		EmailTokenTTL:    24 * time.Hour,
+		RefreshTTLWeb:    7 * 24 * time.Hour,
+		RefreshTTLMobile: 30 * 24 * time.Hour,
+	}
 }
 
 type fakeMailer struct{ lastToken string }
@@ -211,9 +223,19 @@ type fakeStore struct {
 	byEmail  map[string]auth.User
 	byID     map[uuid.UUID]auth.User
 	tokens   map[string]auth.VerificationToken
+	refresh  map[string]*storedRefresh
 	now      time.Time
 	issuer   *token.HS256
 	verifier *token.HS256
+}
+
+type storedRefresh struct {
+	userID    uuid.UUID
+	familyID  uuid.UUID
+	platform  string
+	usedAt    *time.Time
+	revokedAt *time.Time
+	expiresAt time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -222,6 +244,7 @@ func newFakeStore() *fakeStore {
 		byEmail:  map[string]auth.User{},
 		byID:     map[uuid.UUID]auth.User{},
 		tokens:   map[string]auth.VerificationToken{},
+		refresh:  map[string]*storedRefresh{},
 		now:      time.Now(),
 		issuer:   signer,
 		verifier: signer,
@@ -281,4 +304,54 @@ func (s *fakeStore) ConsumeEmailVerification(_ context.Context, hash []byte) (uu
 	s.byID[user.ID] = user
 	s.byEmail[user.Email] = user
 	return user.ID, nil
+}
+
+func (s *fakeStore) CreateRefreshToken(_ context.Context, rt auth.RefreshToken) error {
+	s.refresh[hex.EncodeToString(rt.TokenHash)] = &storedRefresh{
+		userID:    rt.UserID,
+		familyID:  rt.FamilyID,
+		platform:  rt.Platform,
+		expiresAt: rt.ExpiresAt,
+	}
+	return nil
+}
+
+func (s *fakeStore) UseRefreshToken(_ context.Context, hash []byte) (auth.RefreshTokenUse, error) {
+	stored, ok := s.refresh[hex.EncodeToString(hash)]
+	if !ok || stored.usedAt != nil || stored.revokedAt != nil || !s.now.Before(stored.expiresAt) {
+		return auth.RefreshTokenUse{}, auth.ErrRefreshInvalid
+	}
+	used := s.now
+	stored.usedAt = &used
+	return auth.RefreshTokenUse{UserID: stored.userID, FamilyID: stored.familyID}, nil
+}
+
+func (s *fakeStore) RefreshTokenByHash(_ context.Context, hash []byte) (auth.RefreshTokenStatus, error) {
+	stored, ok := s.refresh[hex.EncodeToString(hash)]
+	if !ok {
+		return auth.RefreshTokenStatus{}, auth.ErrRefreshInvalid
+	}
+	return auth.RefreshTokenStatus{FamilyID: stored.familyID, UsedAt: stored.usedAt}, nil
+}
+
+func (s *fakeStore) RevokeRefreshFamily(_ context.Context, familyID uuid.UUID) error {
+	for _, stored := range s.refresh {
+		if stored.familyID == familyID && stored.revokedAt == nil {
+			revoked := s.now
+			stored.revokedAt = &revoked
+		}
+	}
+	return nil
+}
+
+// countLive reports how many tokens in the chain are still usable, which is
+// what reuse detection is supposed to drive to zero.
+func (s *fakeStore) countLive() int {
+	live := 0
+	for _, stored := range s.refresh {
+		if stored.revokedAt == nil {
+			live++
+		}
+	}
+	return live
 }

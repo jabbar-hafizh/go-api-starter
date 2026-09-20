@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/jabbar-hafizh/go-api-starter/internal/token"
 )
 
-// Login exchanges an email and password for an access token.
-func (s *Service) Login(ctx context.Context, email, password string) (token.Access, error) {
+// Login exchanges an email and password for a session.
+func (s *Service) Login(ctx context.Context, email, password string, p Platform) (Session, error) {
 	user, err := s.store.UserByEmail(ctx, normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
@@ -17,35 +15,31 @@ func (s *Service) Login(ctx context.Context, email, password string) (token.Acce
 			// milliseconds while a wrong password takes tens of them, which
 			// tells an attacker exactly which addresses are registered.
 			burnPasswordTime()
-			return token.Access{}, ErrInvalidCredentials
+			return Session{}, ErrInvalidCredentials
 		}
-		return token.Access{}, err
+		return Session{}, err
 	}
 
 	if !user.HasPassword() {
 		// SSO-only account. Same answer and same cost as an unknown email:
 		// saying "this one uses Google" would confirm the address exists.
 		burnPasswordTime()
-		return token.Access{}, ErrInvalidCredentials
+		return Session{}, ErrInvalidCredentials
 	}
 
 	ok, err := verifyPassword(password, *user.PasswordHash)
 	if err != nil {
-		return token.Access{}, fmt.Errorf("verify password: %w", err)
+		return Session{}, fmt.Errorf("verify password: %w", err)
 	}
 	if !ok {
-		return token.Access{}, ErrInvalidCredentials
+		return Session{}, ErrInvalidCredentials
 	}
 
 	// Only after the password checks out, so this cannot be used to probe
 	// which addresses exist.
 	if !user.EmailVerified() {
-		return token.Access{}, ErrEmailNotVerified
+		return Session{}, ErrEmailNotVerified
 	}
 
-	access, err := s.issuer.Issue(user.ID)
-	if err != nil {
-		return token.Access{}, fmt.Errorf("issue access token: %w", err)
-	}
-	return access, nil
+	return s.startSession(ctx, user.ID, p)
 }

@@ -44,7 +44,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (User, e
 }
 
 func (s *Service) sendEmailVerification(ctx context.Context, user User) error {
-	plain, hash, err := newVerificationToken()
+	plain, hash, err := newOpaqueToken()
 	if err != nil {
 		return err
 	}

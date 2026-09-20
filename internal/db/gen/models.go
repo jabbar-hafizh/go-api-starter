@@ -10,6 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
+type RefreshToken struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	TokenHash      []byte
+	FamilyID       uuid.UUID
+	ClientPlatform *string
+	UsedAt         *time.Time
+	RevokedAt      *time.Time
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+}
+
 type User struct {
 	ID              uuid.UUID
 	Email           string

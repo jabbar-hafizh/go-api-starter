@@ -39,6 +39,13 @@ var (
 	ErrUserNotFound = &Error{
 		http.StatusNotFound, "ERR_AUTH_USER_NOT_FOUND", "user not found",
 	}
+	// ErrRefreshInvalid covers unknown, expired, revoked and already spent.
+	// One answer for all four: a client that can tell them apart can probe for
+	// valid tokens, and the action is the same in every case, sign in again.
+	// Reuse is reported in the logs, where it can actually be acted on.
+	ErrRefreshInvalid = &Error{
+		http.StatusUnauthorized, "ERR_AUTH_REFRESH_INVALID", "refresh token is not usable",
+	}
 )
 
 // ValidationError reports every field problem at once so the client does not
