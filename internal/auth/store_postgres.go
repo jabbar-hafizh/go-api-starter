@@ -305,3 +305,24 @@ func toIdentity(row gen.AuthIdentity) Identity {
 		Email:    row.Email,
 	}
 }
+
+func (s *PostgresStore) DeleteExpiredOAuthStates(ctx context.Context) error {
+	if err := s.q.DeleteExpiredOAuthStates(ctx); err != nil {
+		return fmt.Errorf("delete expired oauth states: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteExpiredVerificationTokens(ctx context.Context) error {
+	if err := s.q.DeleteExpiredVerificationTokens(ctx); err != nil {
+		return fmt.Errorf("delete expired verification tokens: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteExpiredRefreshTokens(ctx context.Context, graceDays int32) error {
+	if err := s.q.DeleteExpiredRefreshTokens(ctx, graceDays); err != nil {
+		return fmt.Errorf("delete expired refresh tokens: %w", err)
+	}
+	return nil
+}

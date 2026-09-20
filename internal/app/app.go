@@ -84,6 +84,19 @@ type Server struct {
 
 var _ openapi.StrictServerInterface = (*Server)(nil)
 
+// sweepInterval is how often aged-out records are deleted. Nothing depends on
+// it being prompt; it only has to run often enough that the tables do not grow
+// without bound.
+const sweepInterval = 15 * time.Minute
+
+// components is what buildServer assembles. A struct rather than a growing
+// list of return values.
+type components struct {
+	server *Server
+	signer *token.HS256
+	auth   *auth.Service
+}
+
 // Run starts the service and returns once ctx is cancelled and the server has
 // shut down.
 func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
@@ -111,11 +124,13 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	logger.Info("migrations applied")
 
-	srv, signer, err := buildServer(ctx, cfg, pool, logger)
+	c, err := buildServer(ctx, cfg, pool, logger)
 	if err != nil {
 		return err
 	}
-	httpSrv := newHTTPServer(cfg, srv, signer)
+	startSweeper(ctx, c.auth, logger)
+
+	httpSrv := newHTTPServer(cfg, c.server, c.signer)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -146,7 +161,7 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 
 // buildServer assembles every feature. Kept apart from Run so that one reads
 // as the service lifecycle and this one reads as the dependency graph.
-func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*Server, *token.HS256, error) {
+func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (components, error) {
 	signer := token.NewHS256([]byte(cfg.Auth.JWTSecret), cfg.Auth.JWTKeyID, cfg.Auth.AccessTokenTTL)
 
 	authSvc := auth.NewService(
@@ -168,7 +183,7 @@ func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log
 			cfg.Google.ClientID, cfg.Google.ClientSecret,
 			cfg.Google.RedirectURL, cfg.Google.AllowedAudiences)
 		if err != nil {
-			return nil, nil, err
+			return components{}, err
 		}
 		authSvc.RegisterProvider(google)
 		logger.Info("google sso enabled")
@@ -183,12 +198,41 @@ func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log
 	gate := appversion.NewGate(
 		cfg.Client.MinVersionIOS, cfg.Client.MinVersionAndroid, cfg.Client.UpgradeMessage)
 
-	return &Server{
-		healthAPI:     healthAPI{health.NewHandler(pool)},
-		authAPI:       authAPI{auth.NewHandler(authSvc, cfg.App.BaseURL, secureCookies)},
-		calculatorAPI: calculatorAPI{calculator.NewHandler()},
-		appVersionAPI: appVersionAPI{appversion.NewHandler(gate)},
-	}, signer, nil
+	return components{
+		server: &Server{
+			healthAPI:     healthAPI{health.NewHandler(pool)},
+			authAPI:       authAPI{auth.NewHandler(authSvc, cfg.App.BaseURL, secureCookies)},
+			calculatorAPI: calculatorAPI{calculator.NewHandler()},
+			appVersionAPI: appVersionAPI{appversion.NewHandler(gate)},
+		},
+		signer: signer,
+		auth:   authSvc,
+	}, nil
+}
+
+// startSweeper deletes aged-out records until ctx is cancelled.
+//
+// A failed sweep is logged and the loop continues: the tables growing for one
+// interval is not worth taking anything down over.
+func startSweeper(ctx context.Context, svc *auth.Service, logger *slog.Logger) {
+	go func() {
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+
+		for {
+			// Run first, then wait, so a restart clears whatever accumulated
+			// while the process was down.
+			if err := svc.SweepExpired(ctx); err != nil && ctx.Err() == nil {
+				logger.Error("sweep failed", slog.Any("err", err))
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 // loginLimiter bounds sign-in attempts per email. Disabled means no ceiling at

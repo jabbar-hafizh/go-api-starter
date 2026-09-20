@@ -47,6 +47,10 @@ type store interface {
 
 	CreateOAuthState(ctx context.Context, st OAuthState) error
 	ConsumeOAuthState(ctx context.Context, state string) (OAuthState, error)
+
+	DeleteExpiredOAuthStates(ctx context.Context) error
+	DeleteExpiredVerificationTokens(ctx context.Context) error
+	DeleteExpiredRefreshTokens(ctx context.Context, graceDays int32) error
 }
 
 // ProviderInfo is what a client needs to render a sign-in button.

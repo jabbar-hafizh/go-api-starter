@@ -38,6 +38,18 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 	return err
 }
 
+const deleteExpiredRefreshTokens = `-- name: DeleteExpiredRefreshTokens :exec
+DELETE FROM refresh_tokens WHERE expires_at <= now() - make_interval(days => $1::int)
+`
+
+// Kept for a grace period after expiry rather than deleted on the day. A spent
+// token replayed shortly after it aged out should still be recognised as reuse
+// and take its chain down; only once it is long dead is the row worthless.
+func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context, dollar_1 int32) error {
+	_, err := q.db.Exec(ctx, deleteExpiredRefreshTokens, dollar_1)
+	return err
+}
+
 const refreshTokenByHash = `-- name: RefreshTokenByHash :one
 SELECT user_id, family_id, used_at, revoked_at, expires_at
 FROM refresh_tokens

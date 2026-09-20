@@ -184,9 +184,11 @@ Written down rather than discovered later:
 - **Setting and changing a password** is not implemented. An account created
   through Google has no password and currently no way to add one, so it is tied
   to Google. `verification_tokens.purpose` already allows `set_password`.
-- **`provider_google.go` has no automated test.** Signature, issuer, audience
-  and expiry checks are covered only by manual testing through a browser. Every
-  other part of the auth design is tested, including the account-takeover case.
+- **`provider_google.go` has no automated test.** The browser flow has been run
+  end to end by hand and works: an account was created already verified, with a
+  Google identity and a 7-day web session. But signature, issuer, audience and
+  expiry checks have no automated coverage. Every other part of the auth design
+  is tested, including the account-takeover case.
 - **No email is actually sent.** `mailer.Log` writes the token to the log. The
   interface is in place for a real sender.
 - **Rate limits are in-process**, so they are enforced per replica. Two replicas

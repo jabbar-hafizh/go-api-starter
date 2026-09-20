@@ -26,3 +26,9 @@ UPDATE refresh_tokens
 SET revoked_at = now()
 WHERE family_id = $1
   AND revoked_at IS NULL;
+
+-- name: DeleteExpiredRefreshTokens :exec
+-- Kept for a grace period after expiry rather than deleted on the day. A spent
+-- token replayed shortly after it aged out should still be recognised as reuse
+-- and take its chain down; only once it is long dead is the row worthless.
+DELETE FROM refresh_tokens WHERE expires_at <= now() - make_interval(days => $1::int);

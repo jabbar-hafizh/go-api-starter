@@ -452,3 +452,31 @@ func (s *fakeStore) ConsumeOAuthState(_ context.Context, state string) (auth.OAu
 	delete(s.states, state)
 	return st, nil
 }
+
+func (s *fakeStore) DeleteExpiredOAuthStates(context.Context) error {
+	for key, st := range s.states {
+		if !s.now.Before(st.ExpiresAt) {
+			delete(s.states, key)
+		}
+	}
+	return nil
+}
+
+func (s *fakeStore) DeleteExpiredVerificationTokens(context.Context) error {
+	for key, vt := range s.tokens {
+		if !s.now.Before(vt.ExpiresAt) {
+			delete(s.tokens, key)
+		}
+	}
+	return nil
+}
+
+func (s *fakeStore) DeleteExpiredRefreshTokens(_ context.Context, graceDays int32) error {
+	cutoff := s.now.AddDate(0, 0, -int(graceDays))
+	for key, rt := range s.refresh {
+		if !cutoff.Before(rt.expiresAt) {
+			delete(s.refresh, key)
+		}
+	}
+	return nil
+}

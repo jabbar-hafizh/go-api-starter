@@ -509,6 +509,23 @@ middle of a login, which an in-memory map does not.
 
 *Weight: normative for the requirement; the storage choice is ours.*
 
+### Aged-out records are swept
+
+A background loop deletes expired `oauth_states` and `verification_tokens`, and
+`refresh_tokens` past a 30-day grace period.
+
+**Why.** Every abandoned sign-in leaves an `oauth_states` row behind. Without a
+sweep the table grows forever, and an attacker can drive that by repeatedly
+starting a sign-in they never finish. The generated delete query existed from
+the start and nothing called it, which is how the leak went unnoticed until a
+stale row turned up while checking something else.
+
+Refresh tokens get a grace period rather than being deleted on the day they
+expire: a spent token replayed shortly after expiry should still be recognised
+as reuse and take its chain down. Once it is long dead the row is worthless.
+
+*Weight: ours.*
+
 ### Provider identity is the provider's stable subject, not the email
 
 `auth_identities(provider, provider_user_id)` with a unique index.

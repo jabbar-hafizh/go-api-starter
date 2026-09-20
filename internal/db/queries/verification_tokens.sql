@@ -20,3 +20,6 @@ SET email_verified_at = COALESCE(users.email_verified_at, now())
 FROM consumed
 WHERE users.id = consumed.user_id
 RETURNING users.id;
+
+-- name: DeleteExpiredVerificationTokens :exec
+DELETE FROM verification_tokens WHERE expires_at <= now();

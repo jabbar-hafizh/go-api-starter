@@ -413,3 +413,53 @@ func TestStoreEnabledProviders(t *testing.T) {
 	require.Equal(t, "google", providers[0].Code)
 	require.Equal(t, "Google", providers[0].DisplayName)
 }
+
+// Every abandoned sign-in leaves an oauth_states row, so without a sweep the
+// table grows forever and an attacker can drive it by repeatedly starting a
+// sign-in they never finish.
+func TestStoreSweepDeletesOnlyAgedOutRecords(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	live := auth.OAuthState{
+		State: "live", Nonce: "n", CodeVerifier: "v",
+		Provider: "google", ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	dead := auth.OAuthState{
+		State: "dead", Nonce: "n", CodeVerifier: "v",
+		Provider: "google", ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, store.CreateOAuthState(ctx, live))
+	require.NoError(t, store.CreateOAuthState(ctx, dead))
+
+	user := mustCreateUser(t, store, "sweep@example.com")
+	liveToken := mustCreateToken(t, store, user.ID, time.Now().Add(time.Hour))
+	deadToken := mustCreateToken(t, store, user.ID, time.Now().Add(-time.Hour))
+
+	// Inside the grace period, so reuse of a recently expired token is still
+	// recognised and still takes its chain down.
+	recent := mustCreateRefresh(t, store, user.ID, uuid.Must(uuid.NewV7()), time.Now().Add(-time.Hour))
+	ancient := mustCreateRefresh(t, store, user.ID, uuid.Must(uuid.NewV7()), time.Now().AddDate(0, 0, -60))
+
+	require.NoError(t, store.DeleteExpiredOAuthStates(ctx))
+	require.NoError(t, store.DeleteExpiredVerificationTokens(ctx))
+	require.NoError(t, store.DeleteExpiredRefreshTokens(ctx, 30))
+
+	_, err := store.ConsumeOAuthState(ctx, "live")
+	require.NoError(t, err, "a state that has not expired must survive")
+	_, err = store.ConsumeOAuthState(ctx, "dead")
+	require.ErrorIs(t, err, auth.ErrOAuthStateInvalid)
+
+	_, err = store.ConsumeEmailVerification(ctx, liveToken)
+	require.NoError(t, err, "a verification token that has not expired must survive")
+	_, err = store.ConsumeEmailVerification(ctx, deadToken)
+	require.ErrorIs(t, err, auth.ErrTokenNotUsable)
+
+	// Still present, so replaying it is reuse rather than an unknown token.
+	status, err := store.RefreshTokenByHash(ctx, recent)
+	require.NoError(t, err, "an expired refresh token inside the grace period must survive")
+	require.NotNil(t, status)
+
+	_, err = store.RefreshTokenByHash(ctx, ancient)
+	require.ErrorIs(t, err, auth.ErrRefreshInvalid, "one long past the grace period is gone")
+}
