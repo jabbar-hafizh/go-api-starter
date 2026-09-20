@@ -25,6 +25,10 @@ make logs        # follow the app
 make down        # stop, keep the data
 ```
 
+`.env.example` ships with working Google and Resend credentials on throwaway
+test accounts, so sign-in and verification email work with no setup. Replace
+them for anything real.
+
 The app container reaches Postgres by service name, so `POSTGRES_DSN` is set in
 `docker-compose.yml` and overrides whatever is in `.env`.
 
@@ -38,12 +42,26 @@ make db-up       # Postgres only, waits until healthy
 make run         # migrations run at boot
 ```
 
-### Check it
+### Start here
+
+```
+http://localhost:8080/dev
+```
+
+Sign in with Google, watch the session appear, and call the calculator with the
+token it gives you. That is the whole API exercised end to end in a browser,
+with no tokens to copy and no developer tools.
+
+Two other pages:
+
+```
+http://localhost:8080/docs           the API reference
+http://localhost:8080/openapi.json   the contract itself
+```
 
 ```bash
 curl localhost:8080/healthz   # {"status":"ok"}
 curl localhost:8080/readyz    # 200 when every dependency is ready, 503 if not
-open  localhost:8080/docs     # rendered API reference, from the embedded spec
 ```
 
 `make help` lists every command.
