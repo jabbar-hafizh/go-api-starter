@@ -182,6 +182,11 @@ paths:
         Records the state, nonce and PKCE verifier server side, then redirects
         to the provider. The state is deleted when the callback reads it, so a
         captured callback URL cannot be replayed.
+
+        Open this in a browser, not from a rendered docs page: the Try-it
+        button issues an XHR, which cannot follow the redirect to the provider.
+        Substitute the provider code in the path, so Google is
+        /v1/auth/google/start.
       security: []
       parameters:
         - $ref: "#/components/parameters/ProviderCode"

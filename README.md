@@ -89,6 +89,45 @@ Scopes are `openid`, `email`, `profile`, all non-sensitive, so no Google
 verification review is needed. Put the client ID, secret and redirect URL in
 `.env`. On boot the log says `google sso enabled` once discovery succeeds.
 
+#### Trying it
+
+The paths in the contract are written with a `{provider}` placeholder. For
+Google, substitute `google`:
+
+```
+GET  /v1/auth/{provider}/start   →  /v1/auth/google/start
+GET  /v1/auth/{provider}/callback → /v1/auth/google/callback
+POST /v1/auth/{provider}/token  →  /v1/auth/google/token
+```
+
+**Open the browser flow in a browser, not from `/docs`.** The Try-it button
+there issues an XHR, and this endpoint answers with a redirect to Google, which
+an XHR cannot follow. Paste the URL into the address bar instead:
+
+```
+http://localhost:8080/v1/auth/google/start
+```
+
+You land back on `APP_BASE_URL`, and the refresh token arrives as an httpOnly
+cookie. **No access token appears in the URL**, deliberately: it would end up in
+browser history and `Referer` headers. The app calls `/v1/auth/refresh` to get
+one, which works straight from the cookie the browser now holds.
+
+`redirect_to` is appended to `APP_BASE_URL` and must be a path beginning with a
+single slash, so `?redirect_to=/dashboard` lands on `APP_BASE_URL/dashboard`.
+While there is no frontend, either omit it or point `APP_BASE_URL` at something
+that exists.
+
+To check it worked:
+
+```bash
+docker exec go-api-starter-postgres psql -U app -d app \
+  -c "SELECT u.email, i.provider FROM users u JOIN auth_identities i ON i.user_id = u.id;"
+```
+
+The native path is different and needs no browser: a mobile app gets an ID
+token from the Google SDK and posts it to `/v1/auth/google/token`.
+
 ---
 
 ## Endpoints
