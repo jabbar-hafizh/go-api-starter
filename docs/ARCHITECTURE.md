@@ -619,6 +619,34 @@ and decode each part the way a mail client would.
 
 *Weight: ours.*
 
+### Registration does not fail when the email does not send
+
+The account is created, the failure is logged, and the caller gets 201.
+
+**Why.** By the time the email is attempted the account exists. Answering with
+an error tells the caller it does not, so they retry, hit "email already
+registered", and are stuck with an account they cannot verify and cannot
+recreate. A wrong SMTP credential produced exactly that here before it was
+fixed, and a transient provider outage would do the same in production.
+
+That only works because a fresh link can be requested, which is why the resend
+endpoint is part of the same decision rather than a later addition.
+
+*Weight: ours, from a real failure.*
+
+### Resending a verification link reveals nothing
+
+`POST /v1/auth/verify-email/resend` answers 204 whether the address is
+registered, unregistered or already verified.
+
+**Why.** Any answer that varies makes it a way to test which addresses have
+accounts. It is also rate limited per address, more tightly than login: this
+endpoint sends mail to whatever address the caller names, so without a ceiling
+it is a way to bomb someone else'"'"'s inbox. A new link retires the earlier ones,
+so a stale link from an older email cannot be used later.
+
+*Weight: ours.*
+
 ### The link points at the front end, never at this API
 
 `APP_BASE_URL/verify-email?token=...`, and that page POSTs to the API.

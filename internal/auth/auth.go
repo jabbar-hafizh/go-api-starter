@@ -32,6 +32,7 @@ type store interface {
 	UserByID(ctx context.Context, id uuid.UUID) (User, error)
 	CreateVerificationToken(ctx context.Context, t VerificationToken) error
 	ConsumeEmailVerification(ctx context.Context, tokenHash []byte) (uuid.UUID, error)
+	InvalidateEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	CreateRefreshToken(ctx context.Context, t RefreshToken) error
 	UseRefreshToken(ctx context.Context, tokenHash []byte) (RefreshTokenUse, error)
 	RefreshTokenByHash(ctx context.Context, tokenHash []byte) (RefreshTokenStatus, error)
@@ -103,6 +104,7 @@ type Service struct {
 	refreshTTLMobile time.Duration
 	providers        map[string]Provider
 	loginLimiter     ratelimit.Limiter
+	resendLimiter    ratelimit.Limiter
 	now              func() time.Time
 }
 
@@ -117,6 +119,12 @@ func WithClock(now func() time.Time) ServiceOption {
 // WithLoginLimiter bounds sign-in attempts per email address.
 func WithLoginLimiter(l ratelimit.Limiter) ServiceOption {
 	return func(s *Service) { s.loginLimiter = l }
+}
+
+// WithResendLimiter bounds how often a verification email may be re-sent to
+// one address.
+func WithResendLimiter(l ratelimit.Limiter) ServiceOption {
+	return func(s *Service) { s.resendLimiter = l }
 }
 
 // WithProviders registers the identity providers this server can serve. One
@@ -140,6 +148,7 @@ func NewService(st store, issuer token.Issuer, mailer Mailer, cfg Config, opts .
 		refreshTTLMobile: cfg.RefreshTTLMobile,
 		providers:        map[string]Provider{},
 		loginLimiter:     ratelimit.Allowed{},
+		resendLimiter:    ratelimit.Allowed{},
 		now:              time.Now,
 	}
 	for _, opt := range opts {

@@ -171,6 +171,7 @@ POST   /v1/auth/login
 POST   /v1/auth/refresh                    rotates the token
 POST   /v1/auth/logout                     revokes the whole chain
 POST   /v1/auth/verify-email
+POST   /v1/auth/verify-email/resend         always 204, whatever the address
 GET    /v1/auth/providers                  which sign-in buttons to render
 GET    /v1/auth/{provider}/start           browser flow
 GET    /v1/auth/{provider}/callback
@@ -263,9 +264,6 @@ Written down rather than discovered later:
   fetch every URL in a message and would burn the single-use token before the
   recipient clicked. Until that page exists, copy the token out of the email by
   hand.
-- **There is no way to resend a verification email.** A token lasts 24 hours.
-  After that the account cannot register again (409) and cannot sign in (403),
-  with no way to ask for a new one.
 - **Rate limits are in-process**, so they are enforced per replica. Two replicas
   means twice the real ceiling. `ratelimit.Limiter` is the seam for a shared
   store.

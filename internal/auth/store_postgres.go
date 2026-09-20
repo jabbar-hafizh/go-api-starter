@@ -326,3 +326,10 @@ func (s *PostgresStore) DeleteExpiredRefreshTokens(ctx context.Context, graceDay
 	}
 	return nil
 }
+
+func (s *PostgresStore) InvalidateEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error {
+	if err := s.q.InvalidateEmailVerificationTokens(ctx, userID); err != nil {
+		return fmt.Errorf("invalidate email verification tokens: %w", err)
+	}
+	return nil
+}

@@ -23,3 +23,12 @@ RETURNING users.id;
 
 -- name: DeleteExpiredVerificationTokens :exec
 DELETE FROM verification_tokens WHERE expires_at <= now();
+
+-- name: InvalidateEmailVerificationTokens :exec
+-- Issuing a new link retires the older ones, so only the most recent email
+-- works and a stale link cannot be used later.
+UPDATE verification_tokens
+SET used_at = now()
+WHERE user_id = $1
+  AND purpose = 'email_verify'
+  AND used_at IS NULL;

@@ -198,3 +198,13 @@ func deref(s *string) string {
 func requiredBodyDetails() []httperr.Detail {
 	return []httperr.Detail{{Field: "body", Message: "is required"}}
 }
+
+func (h *Handler) ResendEmailVerification(ctx context.Context, req openapi.ResendEmailVerificationRequestObject) (openapi.ResendEmailVerificationResponseObject, error) {
+	if req.Body != nil {
+		h.svc.ResendEmailVerification(ctx, req.Body.Email)
+	}
+
+	// Always 204, even for a missing body: any other answer distinguishes a
+	// registered address from an unregistered one.
+	return openapi.ResendEmailVerification204Response{}, nil
+}

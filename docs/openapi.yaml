@@ -366,6 +366,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/auth/verify-email/resend:
+    post:
+      tags: [auth]
+      operationId: resendEmailVerification
+      summary: Send a fresh verification link
+      description: |
+        Always answers 204, whether or not the address is registered and
+        whether or not it is already verified. Saying otherwise would turn this
+        into a way to test which addresses have accounts.
+
+        A new link retires the earlier ones, so only the most recent email
+        works. Rate limited per address, because this sends mail to whatever
+        address is named.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResendVerificationRequest"
+      responses:
+        "204":
+          description: Accepted. Check the inbox.
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /v1/me:
     get:
       tags: [me]
@@ -591,6 +616,14 @@ components:
         password:
           type: string
           format: password
+
+    ResendVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          example: someone@example.com
 
     VerifyEmailRequest:
       type: object

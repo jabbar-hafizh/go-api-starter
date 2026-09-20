@@ -480,3 +480,12 @@ func (s *fakeStore) DeleteExpiredRefreshTokens(_ context.Context, graceDays int3
 	}
 	return nil
 }
+
+func (s *fakeStore) InvalidateEmailVerificationTokens(_ context.Context, userID uuid.UUID) error {
+	for key, vt := range s.tokens {
+		if vt.UserID == userID && vt.Purpose == "email_verify" {
+			delete(s.tokens, key)
+		}
+	}
+	return nil
+}

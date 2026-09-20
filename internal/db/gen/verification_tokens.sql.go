@@ -71,3 +71,18 @@ func (q *Queries) DeleteExpiredVerificationTokens(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredVerificationTokens)
 	return err
 }
+
+const invalidateEmailVerificationTokens = `-- name: InvalidateEmailVerificationTokens :exec
+UPDATE verification_tokens
+SET used_at = now()
+WHERE user_id = $1
+  AND purpose = 'email_verify'
+  AND used_at IS NULL
+`
+
+// Issuing a new link retires the older ones, so only the most recent email
+// works and a stale link cannot be used later.
+func (q *Queries) InvalidateEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateEmailVerificationTokens, userID)
+	return err
+}

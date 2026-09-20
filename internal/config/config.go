@@ -59,6 +59,9 @@ type RateLimit struct {
 	// IPs does not buy an attacker more guesses at one account.
 	LoginPerMinute float64
 	LoginBurst     int
+	// Resend sends mail to an address the caller names, so it is tighter.
+	ResendPerHour float64
+	ResendBurst   int
 }
 
 // Client is what the app is told about itself.
@@ -185,6 +188,8 @@ func Load(getenv func(string) string) (Config, error) {
 			IPBurst:        int(p.int32(getenv, "RATE_LIMIT_IP_BURST", 40)),
 			LoginPerMinute: p.float(getenv, "RATE_LIMIT_LOGIN_PER_MINUTE", 5),
 			LoginBurst:     int(p.int32(getenv, "RATE_LIMIT_LOGIN_BURST", 5)),
+			ResendPerHour:  p.float(getenv, "RATE_LIMIT_RESEND_PER_HOUR", 3),
+			ResendBurst:    int(p.int32(getenv, "RATE_LIMIT_RESEND_BURST", 3)),
 		},
 		Client: Client{
 			MinVersionIOS:     p.str(getenv, "MIN_CLIENT_VERSION_IOS", ""),

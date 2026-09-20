@@ -34,11 +34,12 @@ import (
 // publicPaths need no access token. Everything else does: Authenticate fails
 // closed, so adding a route here is the only way to open it.
 var publicPaths = map[string]struct{}{
-	"/healthz":              {},
-	"/readyz":               {},
-	"/v1/auth/register":     {},
-	"/v1/auth/login":        {},
-	"/v1/auth/verify-email": {},
+	"/healthz":                     {},
+	"/readyz":                      {},
+	"/v1/auth/register":            {},
+	"/v1/auth/login":               {},
+	"/v1/auth/verify-email":        {},
+	"/v1/auth/verify-email/resend": {},
 	// These two authenticate with the refresh token, not the access token, so
 	// they must not require a bearer: the whole point is that the access token
 	// has already expired.
@@ -179,6 +180,7 @@ func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log
 			RefreshTTLMobile: cfg.Auth.RefreshTokenTTLMobile,
 		},
 		auth.WithLoginLimiter(loginLimiter(cfg.RateLimit)),
+		auth.WithResendLimiter(resendLimiter(cfg.RateLimit)),
 	)
 
 	if cfg.Google.Configured() {
@@ -276,6 +278,15 @@ func loginLimiter(cfg config.RateLimit) ratelimit.Limiter {
 		return ratelimit.Allowed{}
 	}
 	return ratelimit.NewMemory(cfg.LoginPerMinute/60, cfg.LoginBurst, time.Hour)
+}
+
+// resendLimiter bounds verification emails per address. Tighter than login,
+// because each attempt sends mail to an address the caller chose.
+func resendLimiter(cfg config.RateLimit) ratelimit.Limiter {
+	if !cfg.Enabled {
+		return ratelimit.Allowed{}
+	}
+	return ratelimit.NewMemory(cfg.ResendPerHour/3600, cfg.ResendBurst, 24*time.Hour)
 }
 
 func newHTTPServer(cfg config.Config, srv openapi.StrictServerInterface, verifier token.Verifier) *http.Server {
