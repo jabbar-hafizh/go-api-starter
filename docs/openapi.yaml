@@ -25,6 +25,8 @@ tags:
     description: Registration, login and email verification
   - name: me
     description: The authenticated user
+  - name: calculator
+    description: Arithmetic
 
 security:
   - bearerAuth: []
@@ -124,6 +126,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/Me"
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/calculations:
+    post:
+      tags: [calculator]
+      operationId: calculate
+      summary: Evaluate one arithmetic operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalculationRequest"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalculationResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /healthz:
     get:
@@ -300,6 +324,36 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Identity"
+
+    CalculationRequest:
+      type: object
+      required: [operation, a, b]
+      properties:
+        operation:
+          type: string
+          enum: [add, subtract, multiply, divide]
+        a:
+          $ref: "#/components/schemas/Operand"
+        b:
+          $ref: "#/components/schemas/Operand"
+
+    CalculationResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          example: "13.5"
+
+    Operand:
+      type: string
+      maxLength: 64
+      description: |
+        A decimal number, sent as a string on purpose. A JSON number is decoded
+        into a float64 before any server code runs, and 0.1 + 0.2 is already
+        wrong by that point. The length cap keeps a single request from asking
+        for arbitrarily large arithmetic.
+      example: "10.5"
 
     Identity:
       type: object

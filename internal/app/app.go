@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/jabbar-hafizh/go-api-starter/internal/auth"
+	"github.com/jabbar-hafizh/go-api-starter/internal/calculator"
 	"github.com/jabbar-hafizh/go-api-starter/internal/config"
 	"github.com/jabbar-hafizh/go-api-starter/internal/db"
 	"github.com/jabbar-hafizh/go-api-starter/internal/health"
@@ -41,12 +42,15 @@ type healthAPI struct{ *health.Handler }
 
 type authAPI struct{ *auth.Handler }
 
+type calculatorAPI struct{ *calculator.Handler }
+
 // Server satisfies openapi.StrictServerInterface by embedding every feature's
 // handler. Method promotion gives it all the operations without one struct
 // knowing about everything.
 type Server struct {
 	healthAPI
 	authAPI
+	calculatorAPI
 }
 
 var _ openapi.StrictServerInterface = (*Server)(nil)
@@ -88,8 +92,9 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	)
 
 	srv := &Server{
-		healthAPI: healthAPI{health.NewHandler(pool)},
-		authAPI:   authAPI{auth.NewHandler(authSvc)},
+		healthAPI:     healthAPI{health.NewHandler(pool)},
+		authAPI:       authAPI{auth.NewHandler(authSvc)},
+		calculatorAPI: calculatorAPI{calculator.NewHandler()},
 	}
 	httpSrv := newHTTPServer(cfg.HTTP, srv, signer)
 

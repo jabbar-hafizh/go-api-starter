@@ -21,6 +21,30 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for CalculationRequestOperation.
+const (
+	Add      CalculationRequestOperation = "add"
+	Divide   CalculationRequestOperation = "divide"
+	Multiply CalculationRequestOperation = "multiply"
+	Subtract CalculationRequestOperation = "subtract"
+)
+
+// Valid indicates whether the value is a known member of the CalculationRequestOperation enum.
+func (e CalculationRequestOperation) Valid() bool {
+	switch e {
+	case Add:
+		return true
+	case Divide:
+		return true
+	case Multiply:
+		return true
+	case Subtract:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatusStatus.
 const (
 	HealthStatusStatusOk HealthStatusStatus = "ok"
@@ -74,6 +98,37 @@ func (e TokenPairTokenType) Valid() bool {
 type AuthMethods struct {
 	Identities []Identity `json:"identities"`
 	Password   bool       `json:"password"`
+}
+
+// CalculationRequest defines model for CalculationRequest.
+type CalculationRequest struct {
+	// A A decimal number, sent as a string on purpose. A JSON number is decoded
+	// into a float64 before any server code runs, and 0.1 + 0.2 is already
+	// wrong by that point. The length cap keeps a single request from asking
+	// for arbitrarily large arithmetic.
+	//
+	//
+	// Example: 10.5
+	A Operand `json:"a"`
+
+	// B A decimal number, sent as a string on purpose. A JSON number is decoded
+	// into a float64 before any server code runs, and 0.1 + 0.2 is already
+	// wrong by that point. The length cap keeps a single request from asking
+	// for arbitrarily large arithmetic.
+	//
+	//
+	// Example: 10.5
+	B         Operand                     `json:"b"`
+	Operation CalculationRequestOperation `json:"operation"`
+}
+
+// CalculationRequestOperation defines model for CalculationRequest.Operation.
+type CalculationRequestOperation string
+
+// CalculationResult defines model for CalculationResult.
+type CalculationResult struct {
+	// Result Example: 13.5
+	Result string `json:"result"`
 }
 
 // Error defines model for Error.
@@ -130,6 +185,14 @@ type Me struct {
 	EmailVerified bool                `json:"email_verified"`
 	Id            openapi_types.UUID  `json:"id"`
 }
+
+// Operand A decimal number, sent as a string on purpose. A JSON number is decoded
+// into a float64 before any server code runs, and 0.1 + 0.2 is already
+// wrong by that point. The length cap keeps a single request from asking
+// for arbitrarily large arithmetic.
+//
+// Example: 10.5
+type Operand = string
 
 // ReadinessCheck defines model for ReadinessCheck.
 type ReadinessCheck struct {
@@ -213,6 +276,9 @@ type RegisterUserJSONRequestBody = RegisterRequest
 // VerifyEmailJSONRequestBody defines body for VerifyEmail for application/json ContentType.
 type VerifyEmailJSONRequestBody = VerifyEmailRequest
 
+// CalculateJSONRequestBody defines body for Calculate for application/json ContentType.
+type CalculateJSONRequestBody = CalculationRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness probe
@@ -230,6 +296,9 @@ type ServerInterface interface {
 	// VerifyEmail Confirm an email address with a token
 	// (POST /v1/auth/verify-email)
 	VerifyEmail(w http.ResponseWriter, r *http.Request)
+	// Calculate Evaluate one arithmetic operation
+	// (POST /v1/calculations)
+	Calculate(w http.ResponseWriter, r *http.Request)
 	// GetMe The authenticated user and its active login methods
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -305,6 +374,20 @@ func (siw *ServerInterfaceWrapper) VerifyEmail(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.VerifyEmail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Calculate operation middleware
+func (siw *ServerInterfaceWrapper) Calculate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Calculate(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -452,6 +535,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.LoginUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/verify-email", wrapper.VerifyEmail)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calculations", wrapper.Calculate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
 
@@ -712,6 +796,70 @@ func (response VerifyEmail410JSONResponse) VisitVerifyEmailResponse(w http.Respo
 	return err
 }
 
+type CalculateRequestObject struct {
+	Body *CalculateJSONRequestBody
+}
+
+type CalculateResponseObject interface {
+	VisitCalculateResponse(w http.ResponseWriter) error
+}
+
+type Calculate200JSONResponse CalculationResult
+
+func (response Calculate200JSONResponse) VisitCalculateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Calculate400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response Calculate400JSONResponse) VisitCalculateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Calculate401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response Calculate401JSONResponse) VisitCalculateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Calculate422JSONResponse struct{ ValidationFailedJSONResponse }
+
+func (response Calculate422JSONResponse) VisitCalculateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -764,6 +912,9 @@ type StrictServerInterface interface {
 	// VerifyEmail Confirm an email address with a token
 	// (POST /v1/auth/verify-email)
 	VerifyEmail(ctx context.Context, request VerifyEmailRequestObject) (VerifyEmailResponseObject, error)
+	// Calculate Evaluate one arithmetic operation
+	// (POST /v1/calculations)
+	Calculate(ctx context.Context, request CalculateRequestObject) (CalculateResponseObject, error)
 	// GetMe The authenticated user and its active login methods
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -949,6 +1100,37 @@ func (sh *strictHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Calculate operation middleware
+func (sh *strictHandler) Calculate(w http.ResponseWriter, r *http.Request) {
+	var request CalculateRequestObject
+
+	var body CalculateJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Calculate(ctx, request.(CalculateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Calculate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CalculateResponseObject); ok {
+		if err := validResponse.VisitCalculateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetMe operation middleware
 func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	var request GetMeRequestObject
@@ -978,43 +1160,48 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"K6ofwt2xAqPNzea/AwA=",
+	"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",
+	"C9tlOfYsOmrA2H7YQeDqZvWfAQA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
