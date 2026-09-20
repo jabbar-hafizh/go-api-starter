@@ -10,6 +10,31 @@ import (
 	"github.com/google/uuid"
 )
 
+type AuthIdentity struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
+	ProviderUserID string
+	Email          *string
+	CreatedAt      time.Time
+}
+
+type AuthProvider struct {
+	Code        string
+	DisplayName string
+	Enabled     bool
+}
+
+type OauthState struct {
+	State        string
+	Nonce        string
+	CodeVerifier string
+	Provider     string
+	RedirectTo   *string
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
+}
+
 type RefreshToken struct {
 	ID             uuid.UUID
 	UserID         uuid.UUID

@@ -43,6 +43,45 @@ var (
 	// One answer for all four: a client that can tell them apart can probe for
 	// valid tokens, and the action is the same in every case, sign in again.
 	// Reuse is reported in the logs, where it can actually be acted on.
+	ErrIdentityNotFound = &Error{
+		http.StatusNotFound, "ERR_AUTH_IDENTITY_NOT_FOUND", "identity not found",
+	}
+	ErrProviderEmailUnverified = &Error{
+		http.StatusForbidden, "ERR_AUTH_PROVIDER_EMAIL_UNVERIFIED",
+		"the provider has not verified this email address",
+	}
+	ErrProviderClaimsIncomplete = &Error{
+		http.StatusBadGateway, "ERR_AUTH_PROVIDER_CLAIMS_INCOMPLETE",
+		"the provider did not return an identity and an email",
+	}
+	// ErrLinkNeedsVerifiedEmail closes the takeover where someone registers
+	// with an address they do not own and waits to inherit the real owner's
+	// provider sign-in.
+	ErrLinkNeedsVerifiedEmail = &Error{
+		http.StatusConflict, "ERR_AUTH_LINK_NEEDS_VERIFIED_EMAIL",
+		"sign in with your password and verify this address before linking",
+	}
+	ErrIdentityAlreadyLinked = &Error{
+		http.StatusConflict, "ERR_AUTH_IDENTITY_ALREADY_LINKED",
+		"this provider account is already linked to another user",
+	}
+	// ErrLastAuthMethod stops an account from losing its only way in.
+	ErrLastAuthMethod = &Error{
+		http.StatusConflict, "ERR_AUTH_LAST_METHOD",
+		"cannot remove the only remaining way to sign in",
+	}
+	ErrProviderTokenInvalid = &Error{
+		http.StatusUnauthorized, "ERR_AUTH_PROVIDER_TOKEN_INVALID",
+		"the provider token is not valid",
+	}
+	ErrProviderNotConfigured = &Error{
+		http.StatusNotImplemented, "ERR_AUTH_PROVIDER_NOT_CONFIGURED",
+		"this provider is not configured on this server",
+	}
+	ErrOAuthStateInvalid = &Error{
+		http.StatusBadRequest, "ERR_AUTH_OAUTH_STATE_INVALID",
+		"the sign-in attempt expired or was already used",
+	}
 	ErrRefreshInvalid = &Error{
 		http.StatusUnauthorized, "ERR_AUTH_REFRESH_INVALID", "refresh token is not usable",
 	}

@@ -104,6 +104,24 @@ func TestLoad_Invalid(t *testing.T) {
 			wantMsg: "JWT_SECRET: 5 characters",
 		},
 		{
+			// Half-configured is worse than not configured: it looks like SSO
+			// works until the first person tries it.
+			name: "google id without secret",
+			mutate: func(kv map[string]string) {
+				kv["GOOGLE_CLIENT_ID"] = "id.apps.googleusercontent.com"
+				kv["GOOGLE_REDIRECT_URL"] = "http://localhost:8080/cb"
+			},
+			wantMsg: "GOOGLE_CLIENT_SECRET",
+		},
+		{
+			name: "google id without redirect url",
+			mutate: func(kv map[string]string) {
+				kv["GOOGLE_CLIENT_ID"] = "id.apps.googleusercontent.com"
+				kv["GOOGLE_CLIENT_SECRET"] = "secret"
+			},
+			wantMsg: "GOOGLE_REDIRECT_URL",
+		},
+		{
 			name:    "min exceeds max",
 			mutate:  func(kv map[string]string) { kv["POSTGRES_MIN_CONNS"] = "50" },
 			wantMsg: "exceeds",
@@ -133,6 +151,47 @@ func TestLoad_Invalid(t *testing.T) {
 }
 
 // Every problem at once, so a broken env is fixed in one pass.
+// Leaving Google empty is allowed, so a new contributor can run the project
+// without setting up a Google project first.
+func TestLoad_GoogleIsOptional(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(env(minimalEnv()))
+	require.NoError(t, err)
+	require.False(t, cfg.Google.Configured())
+	require.Empty(t, cfg.Google.AllowedAudiences)
+}
+
+// Google puts the web client id in aud on every platform, so it is the right
+// default for the allowlist.
+func TestLoad_GoogleAudienceDefaultsToClientID(t *testing.T) {
+	t.Parallel()
+
+	kv := minimalEnv()
+	kv["GOOGLE_CLIENT_ID"] = "web.apps.googleusercontent.com"
+	kv["GOOGLE_CLIENT_SECRET"] = "secret"
+	kv["GOOGLE_REDIRECT_URL"] = "http://localhost:8080/v1/auth/google/callback"
+
+	cfg, err := config.Load(env(kv))
+	require.NoError(t, err)
+	require.True(t, cfg.Google.Configured())
+	require.Equal(t, []string{"web.apps.googleusercontent.com"}, cfg.Google.AllowedAudiences)
+}
+
+func TestLoad_GoogleAudienceList(t *testing.T) {
+	t.Parallel()
+
+	kv := minimalEnv()
+	kv["GOOGLE_CLIENT_ID"] = "web.apps.googleusercontent.com"
+	kv["GOOGLE_CLIENT_SECRET"] = "secret"
+	kv["GOOGLE_REDIRECT_URL"] = "http://localhost:8080/cb"
+	kv["GOOGLE_ALLOWED_AUDIENCES"] = " web.apps , , ios.apps "
+
+	cfg, err := config.Load(env(kv))
+	require.NoError(t, err)
+	require.Equal(t, []string{"web.apps", "ios.apps"}, cfg.Google.AllowedAudiences)
+}
+
 func TestLoad_ReportsEveryProblemAtOnce(t *testing.T) {
 	t.Parallel()
 

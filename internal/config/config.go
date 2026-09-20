@@ -26,12 +26,16 @@ type Config struct {
 	HTTP     HTTP
 	Postgres Postgres
 	Auth     Auth
+	Google   Google
 }
 
 // App holds settings not tied to a single dependency.
 type App struct {
 	Env      Env
 	LogLevel string
+	// BaseURL is where the browser is sent after a provider sign-in. Only a
+	// path is ever appended to it, never a caller-supplied URL.
+	BaseURL string
 	// ValidateSpec checks every request and response against the OpenAPI
 	// spec. Expensive, so dev and test only.
 	ValidateSpec bool
@@ -71,6 +75,22 @@ type Auth struct {
 	RefreshTokenTTLMobile time.Duration
 }
 
+// Google holds the OAuth client for Google SSO. Leaving it empty is allowed:
+// the Google endpoints then answer 501 and everything else still works, so a
+// new contributor can run the project without setting up a Google project.
+type Google struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	// AllowedAudiences is the set of aud values accepted in an ID token.
+	// Defaults to ClientID, which is what Google puts there on every platform
+	// when a native app passes the web client id as its server client id.
+	AllowedAudiences []string
+}
+
+// Configured reports whether Google SSO can be served.
+func (g Google) Configured() bool { return g.ClientID != "" }
+
 // minJWTSecretLen matches the HMAC-SHA256 block size. A shorter secret is
 // padded internally, so it buys less entropy than its length suggests.
 const minJWTSecretLen = 32
@@ -83,6 +103,7 @@ func Load(getenv func(string) string) (Config, error) {
 		App: App{
 			Env:          Env(p.str(getenv, "APP_ENV", "local")),
 			LogLevel:     p.str(getenv, "APP_LOG_LEVEL", "info"),
+			BaseURL:      p.str(getenv, "APP_BASE_URL", "http://localhost:3000"),
 			ValidateSpec: p.boolean(getenv, "VALIDATE_SPEC", false),
 		},
 		HTTP: HTTP{
@@ -106,6 +127,16 @@ func Load(getenv func(string) string) (Config, error) {
 			RefreshTokenTTLWeb:    p.duration(getenv, "REFRESH_TOKEN_TTL_WEB", 7*24*time.Hour),
 			RefreshTokenTTLMobile: p.duration(getenv, "REFRESH_TOKEN_TTL_MOBILE", 30*24*time.Hour),
 		},
+		Google: Google{
+			ClientID:         p.str(getenv, "GOOGLE_CLIENT_ID", ""),
+			ClientSecret:     p.str(getenv, "GOOGLE_CLIENT_SECRET", ""),
+			RedirectURL:      p.str(getenv, "GOOGLE_REDIRECT_URL", ""),
+			AllowedAudiences: p.list(getenv, "GOOGLE_ALLOWED_AUDIENCES"),
+		},
+	}
+
+	if cfg.Google.Configured() && len(cfg.Google.AllowedAudiences) == 0 {
+		cfg.Google.AllowedAudiences = []string{cfg.Google.ClientID}
 	}
 
 	cfg.validate(&p)
@@ -130,6 +161,17 @@ func (c Config) validate(p *parser) {
 	if c.Auth.JWTSecret != "" && len(c.Auth.JWTSecret) < minJWTSecretLen {
 		p.add(fmt.Errorf("JWT_SECRET: %d characters, need at least %d",
 			len(c.Auth.JWTSecret), minJWTSecretLen))
+	}
+
+	// Half-configured is worse than not configured: it looks like SSO works
+	// until the first person tries it.
+	if c.Google.ClientID != "" {
+		if c.Google.ClientSecret == "" {
+			p.add(errors.New("GOOGLE_CLIENT_SECRET: required when GOOGLE_CLIENT_ID is set"))
+		}
+		if c.Google.RedirectURL == "" {
+			p.add(errors.New("GOOGLE_REDIRECT_URL: required when GOOGLE_CLIENT_ID is set"))
+		}
 	}
 
 	if c.Postgres.MinConns > c.Postgres.MaxConns {
@@ -187,6 +229,22 @@ func (p *parser) int32(getenv func(string) string, key string, def int32) int32 
 		return def
 	}
 	return int32(v)
+}
+
+// list reads a comma separated value, dropping blanks.
+func (p *parser) list(getenv func(string) string, key string) []string {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return nil
+	}
+
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (p *parser) boolean(getenv func(string) string, key string, def bool) bool {

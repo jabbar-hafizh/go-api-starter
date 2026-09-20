@@ -25,12 +25,17 @@ func (unauthorizedError) Code() string    { return "ERR_UNAUTHORIZED" }
 
 // Authenticate verifies the bearer token and puts the user id in the context.
 //
-// It fails closed: anything not listed in public needs a token, so a new route
-// is protected the moment it exists and opening one is a deliberate edit here.
-func Authenticate(v token.Verifier, public map[string]struct{}) func(http.Handler) http.Handler {
+// It fails closed: anything not listed as public needs a token, so a new route
+// is protected the moment it exists and opening one is a deliberate edit at the
+// call site.
+//
+// patterns cover routes with a path parameter, written the same way the routes
+// are: "/v1/auth/{provider}/start". A {segment} matches exactly one segment, so
+// this stays as narrow as an exact path rather than opening a whole subtree.
+func Authenticate(v token.Verifier, public map[string]struct{}, patterns []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := public[cleanPath(r.URL)]; ok {
+			if isPublic(cleanPath(r.URL), public, patterns) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -57,6 +62,41 @@ func Authenticate(v token.Verifier, public map[string]struct{}) func(http.Handle
 func UserID(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userIDKey).(uuid.UUID)
 	return id, ok
+}
+
+func isPublic(path string, public map[string]struct{}, patterns []string) bool {
+	if _, ok := public[path]; ok {
+		return true
+	}
+	for _, pattern := range patterns {
+		if matchPattern(pattern, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPattern compares segment by segment. A {name} segment matches any single
+// non-empty segment; everything else must be equal.
+func matchPattern(pattern, path string) bool {
+	want := strings.Split(strings.Trim(pattern, "/"), "/")
+	got := strings.Split(strings.Trim(path, "/"), "/")
+	if len(want) != len(got) {
+		return false
+	}
+
+	for i, segment := range want {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			if got[i] == "" {
+				return false
+			}
+			continue
+		}
+		if segment != got[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func bearerToken(r *http.Request) (string, bool) {

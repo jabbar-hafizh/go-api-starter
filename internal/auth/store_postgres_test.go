@@ -269,3 +269,147 @@ func mustCreateRefresh(t *testing.T, store *auth.PostgresStore, userID, familyID
 	require.NoError(t, err)
 	return sum[:]
 }
+
+func TestStoreCreateUserWithIdentity(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	email := "sso@example.com"
+	subject := "google-subject-1"
+
+	user, err := store.CreateUserWithIdentity(ctx, email, auth.Identity{
+		ID:       uuid.Must(uuid.NewV7()),
+		Provider: "google",
+		Subject:  subject,
+		Email:    &email,
+	})
+	require.NoError(t, err)
+	require.True(t, user.EmailVerified(), "the provider vouched for the address")
+	require.False(t, user.HasPassword())
+
+	// Both halves landed. A user without its identity would be an account
+	// nobody can sign in to.
+	identity, err := store.IdentityByProviderSubject(ctx, "google", subject)
+	require.NoError(t, err)
+	require.Equal(t, user.ID, identity.UserID)
+}
+
+// One provider account belongs to exactly one user, and the unique index is
+// what decides it, so two requests racing to link cannot both win.
+func TestStoreIdentityIsUniquePerProviderSubject(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	first := mustCreateUser(t, store, "one@example.com")
+	second := mustCreateUser(t, store, "two@example.com")
+
+	_, err := store.CreateIdentity(ctx, first.ID, auth.Identity{
+		ID: uuid.Must(uuid.NewV7()), Provider: "google", Subject: "shared-subject",
+	})
+	require.NoError(t, err)
+
+	_, err = store.CreateIdentity(ctx, second.ID, auth.Identity{
+		ID: uuid.Must(uuid.NewV7()), Provider: "google", Subject: "shared-subject",
+	})
+	require.ErrorIs(t, err, auth.ErrIdentityAlreadyLinked)
+}
+
+// CountAuthMethods is what the last-method guard rests on, so the SQL has to
+// be right across every combination.
+func TestStoreCountAuthMethods(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	withPassword := mustCreateUser(t, store, "password@example.com")
+	count, err := store.CountAuthMethods(ctx, withPassword.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	_, err = store.CreateIdentity(ctx, withPassword.ID, auth.Identity{
+		ID: uuid.Must(uuid.NewV7()), Provider: "google", Subject: "sub-both",
+	})
+	require.NoError(t, err)
+
+	count, err = store.CountAuthMethods(ctx, withPassword.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, count, "password plus one identity")
+
+	email := "ssoonly@example.com"
+	ssoOnly, err := store.CreateUserWithIdentity(ctx, email, auth.Identity{
+		ID: uuid.Must(uuid.NewV7()), Provider: "google", Subject: "sub-sso", Email: &email,
+	})
+	require.NoError(t, err)
+
+	count, err = store.CountAuthMethods(ctx, ssoOnly.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "an SSO-only account has exactly one way in")
+}
+
+func TestStoreDeleteIdentityIsScopedToItsOwner(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	owner := mustCreateUser(t, store, "owner@example.com")
+	stranger := mustCreateUser(t, store, "stranger@example.com")
+
+	identity, err := store.CreateIdentity(ctx, owner.ID, auth.Identity{
+		ID: uuid.Must(uuid.NewV7()), Provider: "google", Subject: "sub-owned",
+	})
+	require.NoError(t, err)
+
+	// Scoped by user id, so asking for someone else's identity looks exactly
+	// like asking for one that does not exist.
+	require.ErrorIs(t, store.DeleteIdentity(ctx, identity.ID, stranger.ID), auth.ErrIdentityNotFound)
+	require.NoError(t, store.DeleteIdentity(ctx, identity.ID, owner.ID))
+	require.ErrorIs(t, store.DeleteIdentity(ctx, identity.ID, owner.ID), auth.ErrIdentityNotFound)
+}
+
+func TestStoreOAuthStateIsSingleUse(t *testing.T) {
+	store := newStore(t)
+	ctx := t.Context()
+
+	redirect := "/dashboard"
+	st := auth.OAuthState{
+		State:        "state-value",
+		Nonce:        "nonce-value",
+		CodeVerifier: "verifier-value",
+		Provider:     "google",
+		RedirectTo:   &redirect,
+		ExpiresAt:    time.Now().Add(10 * time.Minute),
+	}
+	require.NoError(t, store.CreateOAuthState(ctx, st))
+
+	got, err := store.ConsumeOAuthState(ctx, st.State)
+	require.NoError(t, err)
+	require.Equal(t, st.Nonce, got.Nonce)
+	require.Equal(t, st.CodeVerifier, got.CodeVerifier)
+	require.Equal(t, "/dashboard", *got.RedirectTo)
+
+	// Reading deleted it, which is what stops a captured callback URL from
+	// being replayed.
+	_, err = store.ConsumeOAuthState(ctx, st.State)
+	require.ErrorIs(t, err, auth.ErrOAuthStateInvalid)
+}
+
+func TestStoreOAuthStateExpires(t *testing.T) {
+	store := newStore(t)
+
+	st := auth.OAuthState{
+		State: "old-state", Nonce: "n", CodeVerifier: "v",
+		Provider: "google", ExpiresAt: time.Now().Add(-time.Second),
+	}
+	require.NoError(t, store.CreateOAuthState(t.Context(), st))
+
+	_, err := store.ConsumeOAuthState(t.Context(), st.State)
+	require.ErrorIs(t, err, auth.ErrOAuthStateInvalid)
+}
+
+func TestStoreEnabledProviders(t *testing.T) {
+	store := newStore(t)
+
+	providers, err := store.EnabledProviders(t.Context())
+	require.NoError(t, err)
+	require.Len(t, providers, 1, "the migration seeds google")
+	require.Equal(t, "google", providers[0].Code)
+	require.Equal(t, "Google", providers[0].DisplayName)
+}

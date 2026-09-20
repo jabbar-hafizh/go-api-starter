@@ -3,13 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/jabbar-hafizh/go-api-starter/internal/httperr"
-	"github.com/jabbar-hafizh/go-api-starter/internal/middleware"
 	"github.com/jabbar-hafizh/go-api-starter/internal/openapi"
 )
 
@@ -20,11 +18,13 @@ type Handler struct {
 	// secureCookies is off over plain HTTP, otherwise browsers drop the
 	// refresh cookie and local development silently stops working.
 	secureCookies bool
+	// baseURL is where the browser is sent after a provider sign-in.
+	baseURL string
 }
 
 // NewHandler returns the HTTP handler for this package's operations.
-func NewHandler(svc *Service, secureCookies bool) *Handler {
-	return &Handler{svc: svc, secureCookies: secureCookies}
+func NewHandler(svc *Service, baseURL string, secureCookies bool) *Handler {
+	return &Handler{svc: svc, baseURL: baseURL, secureCookies: secureCookies}
 }
 
 func (h *Handler) RegisterUser(ctx context.Context, req openapi.RegisterUserRequestObject) (openapi.RegisterUserResponseObject, error) {
@@ -98,25 +98,14 @@ func (h *Handler) VerifyEmail(ctx context.Context, req openapi.VerifyEmailReques
 }
 
 func (h *Handler) GetMe(ctx context.Context, _ openapi.GetMeRequestObject) (openapi.GetMeResponseObject, error) {
-	userID, ok := middleware.UserID(ctx)
-	if !ok {
-		// The middleware should have stopped this, so reaching here means the
-		// route was wired as public by mistake.
-		return nil, errors.New("authenticated route reached without a user id")
+	userID, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	account, err := h.svc.Account(ctx, userID)
 	if err != nil {
 		return nil, err
-	}
-
-	identities := make([]openapi.Identity, 0, len(account.Identities))
-	for _, id := range account.Identities {
-		identities = append(identities, openapi.Identity{
-			Id:       id.ID,
-			Provider: id.Provider,
-			Email:    id.Email,
-		})
 	}
 
 	return openapi.GetMe200JSONResponse{
@@ -125,7 +114,7 @@ func (h *Handler) GetMe(ctx context.Context, _ openapi.GetMeRequestObject) (open
 		EmailVerified: account.User.EmailVerified(),
 		AuthMethods: openapi.AuthMethods{
 			Password:   account.HasPassword,
-			Identities: identities,
+			Identities: toAPIIdentities(account.Identities),
 		},
 	}, nil
 }
@@ -162,6 +151,10 @@ func (r sessionJSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error
 }
 
 func (r sessionJSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+
+func (r sessionJSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
 	return r.write(w)
 }
 

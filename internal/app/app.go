@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/jabbar-hafizh/go-api-starter/internal/auth"
 	"github.com/jabbar-hafizh/go-api-starter/internal/calculator"
 	"github.com/jabbar-hafizh/go-api-starter/internal/config"
@@ -36,8 +38,18 @@ var publicPaths = map[string]struct{}{
 	// These two authenticate with the refresh token, not the access token, so
 	// they must not require a bearer: the whole point is that the access token
 	// has already expired.
-	"/v1/auth/refresh": {},
-	"/v1/auth/logout":  {},
+	"/v1/auth/refresh":   {},
+	"/v1/auth/logout":    {},
+	"/v1/auth/providers": {},
+}
+
+// publicPatterns covers the routes that carry a path parameter. Written as the
+// routes are, so a {provider} matches one segment and nothing else: adding an
+// authenticated route under /v1/auth/ stays protected.
+var publicPatterns = []string{
+	"/v1/auth/{provider}/start",
+	"/v1/auth/{provider}/callback",
+	"/v1/auth/{provider}/token",
 }
 
 // Each feature names its handler Handler, which is right inside that package
@@ -87,27 +99,9 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	logger.Info("migrations applied")
 
-	signer := token.NewHS256([]byte(cfg.Auth.JWTSecret), cfg.Auth.JWTKeyID, cfg.Auth.AccessTokenTTL)
-
-	authSvc := auth.NewService(
-		auth.NewPostgresStore(pool),
-		signer,
-		mailer.NewLog(),
-		auth.Config{
-			EmailTokenTTL:    cfg.Auth.EmailTokenTTL,
-			RefreshTTLWeb:    cfg.Auth.RefreshTokenTTLWeb,
-			RefreshTTLMobile: cfg.Auth.RefreshTokenTTLMobile,
-		},
-	)
-
-	// Browsers drop Secure cookies over plain HTTP, so local development would
-	// silently never receive one.
-	secureCookies := cfg.App.Env != config.EnvLocal
-
-	srv := &Server{
-		healthAPI:     healthAPI{health.NewHandler(pool)},
-		authAPI:       authAPI{auth.NewHandler(authSvc, secureCookies)},
-		calculatorAPI: calculatorAPI{calculator.NewHandler()},
+	srv, signer, err := buildServer(ctx, cfg, pool, logger)
+	if err != nil {
+		return err
 	}
 	httpSrv := newHTTPServer(cfg.HTTP, srv, signer)
 
@@ -138,6 +132,48 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	return nil
 }
 
+// buildServer assembles every feature. Kept apart from Run so that one reads
+// as the service lifecycle and this one reads as the dependency graph.
+func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*Server, *token.HS256, error) {
+	signer := token.NewHS256([]byte(cfg.Auth.JWTSecret), cfg.Auth.JWTKeyID, cfg.Auth.AccessTokenTTL)
+
+	authSvc := auth.NewService(
+		auth.NewPostgresStore(pool),
+		signer,
+		mailer.NewLog(),
+		auth.Config{
+			EmailTokenTTL:    cfg.Auth.EmailTokenTTL,
+			RefreshTTLWeb:    cfg.Auth.RefreshTokenTTLWeb,
+			RefreshTTLMobile: cfg.Auth.RefreshTokenTTLMobile,
+		},
+	)
+
+	if cfg.Google.Configured() {
+		// Discovery talks to the network, which is why it happens at startup
+		// rather than inside a request.
+		google, err := auth.NewGoogle(ctx,
+			cfg.Google.ClientID, cfg.Google.ClientSecret,
+			cfg.Google.RedirectURL, cfg.Google.AllowedAudiences)
+		if err != nil {
+			return nil, nil, err
+		}
+		authSvc.RegisterProvider(google)
+		logger.Info("google sso enabled")
+	} else {
+		logger.Warn("google sso not configured, its endpoints will answer 501")
+	}
+
+	// Browsers drop Secure cookies over plain HTTP, so local development would
+	// silently never receive one.
+	secureCookies := cfg.App.Env != config.EnvLocal
+
+	return &Server{
+		healthAPI:     healthAPI{health.NewHandler(pool)},
+		authAPI:       authAPI{auth.NewHandler(authSvc, cfg.App.BaseURL, secureCookies)},
+		calculatorAPI: calculatorAPI{calculator.NewHandler()},
+	}, signer, nil
+}
+
 func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface, verifier token.Verifier) *http.Server {
 	handler := openapi.NewStrictHandlerWithOptions(srv, nil, openapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httperr.Request,
@@ -149,7 +185,7 @@ func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface, verifier 
 
 	return &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           middleware.Authenticate(verifier, publicPaths)(mux),
+		Handler:           middleware.Authenticate(verifier, publicPaths, publicPatterns)(mux),
 		ReadTimeout:       cfg.ReadTimeout,
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

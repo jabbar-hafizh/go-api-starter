@@ -152,6 +152,190 @@ paths:
         "204":
           description: Session ended
 
+  /v1/auth/providers:
+    get:
+      tags: [auth]
+      operationId: listProviders
+      summary: Identity providers this server can actually serve
+      description: |
+        Both enabled in the database and configured on this server, so a client
+        never renders a button that cannot work.
+      security: []
+      responses:
+        "200":
+          description: Providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProviderInfo"
+
+  /v1/auth/{provider}/start:
+    get:
+      tags: [auth]
+      operationId: startProviderSignIn
+      summary: Begin the browser sign-in flow
+      description: |
+        Records the state, nonce and PKCE verifier server side, then redirects
+        to the provider. The state is deleted when the callback reads it, so a
+        captured callback URL cannot be replayed.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderCode"
+        - name: redirect_to
+          in: query
+          required: false
+          description: |
+            Where to send the browser afterwards. Must be a path beginning with
+            a single slash: accepting a full URL here would make this an open
+            redirect.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the provider
+          headers:
+            Location:
+              schema:
+                type: string
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /v1/auth/{provider}/callback:
+    get:
+      tags: [auth]
+      operationId: completeProviderSignIn
+      summary: Finish the browser sign-in flow
+      description: |
+        Sets the refresh cookie and redirects back to the app. The access token
+        is deliberately not placed in the URL, where it would end up in browser
+        history and referrer headers: the app calls /v1/auth/refresh to get one.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderCode"
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect back to the app, with the refresh cookie set
+          headers:
+            Location:
+              schema:
+                type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /v1/auth/{provider}/token:
+    post:
+      tags: [auth]
+      operationId: signInWithProviderToken
+      summary: Sign in with an ID token obtained by a native app
+      description: |
+        For native clients that got the token from the provider SDK. Verified
+        by signature, issuer, audience allowlist and expiry. There is no nonce
+        here because the client would be supplying both sides of it, which
+        proves nothing; the browser flow is the stronger path.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderCode"
+        - $ref: "#/components/parameters/ClientPlatform"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderTokenRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /v1/me/identities:
+    get:
+      tags: [me]
+      operationId: listIdentities
+      summary: Providers linked to this account
+      responses:
+        "200":
+          description: Linked identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Identity"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/me/identities/{provider}:
+    post:
+      tags: [me]
+      operationId: linkIdentity
+      summary: Link a provider to this account
+      description: |
+        Needs no email checks: the caller has already proved they own this
+        account. The unique index on provider and subject is what stops one
+        provider account being attached to two users.
+      parameters:
+        - $ref: "#/components/parameters/ProviderCode"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderTokenRequest"
+      responses:
+        "201":
+          description: Linked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /v1/me/identities/{id}/unlink:
+    post:
+      tags: [me]
+      operationId: unlinkIdentity
+      summary: Remove a provider from this account
+      description: |
+        Refused when it is the only remaining way to sign in. Someone who
+        signed up with a provider and never set a password would otherwise lock
+        themselves out permanently.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Unlinked
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /v1/auth/verify-email:
     post:
       tags: [auth]
@@ -257,6 +441,15 @@ components:
       schema:
         type: string
 
+    ProviderCode:
+      name: provider
+      in: path
+      required: true
+      description: Provider code, as listed by /v1/auth/providers.
+      schema:
+        type: string
+        example: google
+
     ClientPlatform:
       name: X-Client-Platform
       in: header
@@ -302,6 +495,18 @@ components:
             $ref: "#/components/schemas/Error"
     ValidationFailed:
       description: Well-formed but failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such thing, or not yours
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotImplemented:
+      description: Not configured on this server
       content:
         application/json:
           schema:
@@ -453,6 +658,24 @@ components:
         wrong by that point. The length cap keeps a single request from asking
         for arbitrarily large arithmetic.
       example: "10.5"
+
+    ProviderInfo:
+      type: object
+      required: [code, display_name]
+      properties:
+        code:
+          type: string
+          example: google
+        display_name:
+          type: string
+          example: Google
+
+    ProviderTokenRequest:
+      type: object
+      required: [id_token]
+      properties:
+        id_token:
+          type: string
 
     Identity:
       type: object

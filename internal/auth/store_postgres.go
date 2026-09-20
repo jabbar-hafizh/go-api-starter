@@ -154,3 +154,154 @@ func (s *PostgresStore) RevokeRefreshFamily(ctx context.Context, familyID uuid.U
 	}
 	return nil
 }
+
+func (s *PostgresStore) IdentityByProviderSubject(ctx context.Context, provider, subject string) (Identity, error) {
+	row, err := s.q.IdentityByProviderSubject(ctx, gen.IdentityByProviderSubjectParams{
+		Provider:       provider,
+		ProviderUserID: subject,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Identity{}, ErrIdentityNotFound
+		}
+		return Identity{}, fmt.Errorf("identity by provider subject: %w", err)
+	}
+	return toIdentity(gen.AuthIdentity{
+		ID: row.ID, UserID: row.UserID, Provider: row.Provider,
+		ProviderUserID: row.ProviderUserID, Email: row.Email,
+	}), nil
+}
+
+func (s *PostgresStore) IdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]Identity, error) {
+	rows, err := s.q.IdentitiesByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("identities by user: %w", err)
+	}
+
+	out := make([]Identity, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toIdentity(gen.AuthIdentity{
+			ID: row.ID, UserID: row.UserID, Provider: row.Provider,
+			ProviderUserID: row.ProviderUserID, Email: row.Email,
+		}))
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) CreateIdentity(ctx context.Context, userID uuid.UUID, i Identity) (Identity, error) {
+	row, err := s.q.CreateIdentity(ctx, gen.CreateIdentityParams{
+		ID:             i.ID,
+		UserID:         userID,
+		Provider:       i.Provider,
+		ProviderUserID: i.Subject,
+		Email:          i.Email,
+	})
+	if err != nil {
+		// The unique index on (provider, provider_user_id) is what decides
+		// this, so two requests racing to link the same provider account
+		// cannot both win.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return Identity{}, ErrIdentityAlreadyLinked
+		}
+		return Identity{}, fmt.Errorf("create identity: %w", err)
+	}
+	return toIdentity(gen.AuthIdentity{
+		ID: row.ID, UserID: row.UserID, Provider: row.Provider,
+		ProviderUserID: row.ProviderUserID, Email: row.Email,
+	}), nil
+}
+
+func (s *PostgresStore) CreateUserWithIdentity(ctx context.Context, email string, i Identity) (User, error) {
+	row, err := s.q.CreateUserWithIdentity(ctx, gen.CreateUserWithIdentityParams{
+		ID:             uuid.Must(uuid.NewV7()),
+		Email:          email,
+		ID_2:           i.ID,
+		Provider:       i.Provider,
+		ProviderUserID: i.Subject,
+		Email_2:        i.Email,
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return User{}, ErrEmailTaken
+		}
+		return User{}, fmt.Errorf("create user with identity: %w", err)
+	}
+	return toUser(gen.User(row)), nil
+}
+
+func (s *PostgresStore) DeleteIdentity(ctx context.Context, id, userID uuid.UUID) error {
+	if _, err := s.q.DeleteIdentity(ctx, gen.DeleteIdentityParams{ID: id, UserID: userID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Scoped by user id, so asking for someone else's identity is
+			// indistinguishable from asking for one that does not exist.
+			return ErrIdentityNotFound
+		}
+		return fmt.Errorf("delete identity: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) CountAuthMethods(ctx context.Context, userID uuid.UUID) (int, error) {
+	count, err := s.q.CountAuthMethods(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("count auth methods: %w", err)
+	}
+	return int(count), nil
+}
+
+func (s *PostgresStore) EnabledProviders(ctx context.Context) ([]ProviderInfo, error) {
+	rows, err := s.q.EnabledProviders(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("enabled providers: %w", err)
+	}
+
+	out := make([]ProviderInfo, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ProviderInfo{Code: row.Code, DisplayName: row.DisplayName})
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) CreateOAuthState(ctx context.Context, st OAuthState) error {
+	err := s.q.CreateOAuthState(ctx, gen.CreateOAuthStateParams{
+		State:        st.State,
+		Nonce:        st.Nonce,
+		CodeVerifier: st.CodeVerifier,
+		Provider:     st.Provider,
+		RedirectTo:   st.RedirectTo,
+		ExpiresAt:    st.ExpiresAt,
+	})
+	if err != nil {
+		return fmt.Errorf("create oauth state: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ConsumeOAuthState(ctx context.Context, state string) (OAuthState, error) {
+	row, err := s.q.ConsumeOAuthState(ctx, state)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OAuthState{}, ErrOAuthStateInvalid
+		}
+		return OAuthState{}, fmt.Errorf("consume oauth state: %w", err)
+	}
+	return OAuthState{
+		State:        state,
+		Nonce:        row.Nonce,
+		CodeVerifier: row.CodeVerifier,
+		Provider:     row.Provider,
+		RedirectTo:   row.RedirectTo,
+	}, nil
+}
+
+func toIdentity(row gen.AuthIdentity) Identity {
+	return Identity{
+		ID:       row.ID,
+		UserID:   row.UserID,
+		Provider: row.Provider,
+		Subject:  row.ProviderUserID,
+		Email:    row.Email,
+	}
+}

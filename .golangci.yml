@@ -43,9 +43,12 @@ linters:
       - internal/db/gen
       - internal/openapi
     rules:
+      # A table-driven test grows with the number of cases, which is a list and
+      # not the nesting these linters are meant to catch.
       - path: _test\.go
         linters:
           - cyclop
+          - funlen
           - gocognit
           - gosec
       # A doc comment on every exported symbol is right for a library. This is

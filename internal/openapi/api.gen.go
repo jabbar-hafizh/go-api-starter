@@ -159,6 +159,27 @@ func (e RefreshSessionParamsXClientPlatform) Valid() bool {
 	}
 }
 
+// Defines values for SignInWithProviderTokenParamsXClientPlatform.
+const (
+	SignInWithProviderTokenParamsXClientPlatformAndroid SignInWithProviderTokenParamsXClientPlatform = "android"
+	SignInWithProviderTokenParamsXClientPlatformIos     SignInWithProviderTokenParamsXClientPlatform = "ios"
+	SignInWithProviderTokenParamsXClientPlatformWeb     SignInWithProviderTokenParamsXClientPlatform = "web"
+)
+
+// Valid indicates whether the value is a known member of the SignInWithProviderTokenParamsXClientPlatform enum.
+func (e SignInWithProviderTokenParamsXClientPlatform) Valid() bool {
+	switch e {
+	case SignInWithProviderTokenParamsXClientPlatformAndroid:
+		return true
+	case SignInWithProviderTokenParamsXClientPlatformIos:
+		return true
+	case SignInWithProviderTokenParamsXClientPlatformWeb:
+		return true
+	default:
+		return false
+	}
+}
+
 // AuthMethods What the client needs to decide between "Set password" and "Change
 // password", and when to disable unlinking.
 type AuthMethods struct {
@@ -260,6 +281,20 @@ type Me struct {
 // Example: 10.5
 type Operand = string
 
+// ProviderInfo defines model for ProviderInfo.
+type ProviderInfo struct {
+	// Code Example: google
+	Code string `json:"code"`
+
+	// DisplayName Example: Google
+	DisplayName string `json:"display_name"`
+}
+
+// ProviderTokenRequest defines model for ProviderTokenRequest.
+type ProviderTokenRequest struct {
+	IdToken string `json:"id_token"`
+}
+
 // ReadinessCheck defines model for ReadinessCheck.
 type ReadinessCheck struct {
 	// Error Set only when ok=false. Never carries internal detail.
@@ -329,6 +364,9 @@ type VerifyEmailRequest struct {
 // ClientPlatform defines model for ClientPlatform.
 type ClientPlatform string
 
+// ProviderCode Example: google
+type ProviderCode = string
+
 // RefreshCookie defines model for RefreshCookie.
 type RefreshCookie = string
 
@@ -340,6 +378,12 @@ type Conflict = Error
 
 // Forbidden defines model for Forbidden.
 type Forbidden = Error
+
+// NotFound defines model for NotFound.
+type NotFound = Error
+
+// NotImplemented defines model for NotImplemented.
+type NotImplemented = Error
 
 // TooManyRequests defines model for TooManyRequests.
 type TooManyRequests = Error
@@ -383,6 +427,31 @@ type RefreshSessionParams struct {
 // RefreshSessionParamsXClientPlatform defines parameters for RefreshSession.
 type RefreshSessionParamsXClientPlatform string
 
+// CompleteProviderSignInParams defines parameters for CompleteProviderSignIn.
+type CompleteProviderSignInParams struct {
+	State string `form:"state" json:"state"`
+	Code  string `form:"code" json:"code"`
+}
+
+// StartProviderSignInParams defines parameters for StartProviderSignIn.
+type StartProviderSignInParams struct {
+	// RedirectTo Where to send the browser afterwards. Must be a path beginning with
+	// a single slash: accepting a full URL here would make this an open
+	// redirect.
+	RedirectTo *string `form:"redirect_to,omitempty" json:"redirect_to,omitempty"`
+}
+
+// SignInWithProviderTokenParams defines parameters for SignInWithProviderToken.
+type SignInWithProviderTokenParams struct {
+	// XClientPlatform Decides how the refresh token is delivered. "web" gets it in an
+	// httpOnly cookie and never in the response body, so a script cannot read
+	// it. Anything else gets it in the body to put in secure storage.
+	XClientPlatform *SignInWithProviderTokenParamsXClientPlatform `json:"X-Client-Platform,omitempty"`
+}
+
+// SignInWithProviderTokenParamsXClientPlatform defines parameters for SignInWithProviderToken.
+type SignInWithProviderTokenParamsXClientPlatform string
+
 // LoginUserJSONRequestBody defines body for LoginUser for application/json ContentType.
 type LoginUserJSONRequestBody = LoginRequest
 
@@ -398,8 +467,14 @@ type RegisterUserJSONRequestBody = RegisterRequest
 // VerifyEmailJSONRequestBody defines body for VerifyEmail for application/json ContentType.
 type VerifyEmailJSONRequestBody = VerifyEmailRequest
 
+// SignInWithProviderTokenJSONRequestBody defines body for SignInWithProviderToken for application/json ContentType.
+type SignInWithProviderTokenJSONRequestBody = ProviderTokenRequest
+
 // CalculateJSONRequestBody defines body for Calculate for application/json ContentType.
 type CalculateJSONRequestBody = CalculationRequest
+
+// LinkIdentityJSONRequestBody defines body for LinkIdentity for application/json ContentType.
+type LinkIdentityJSONRequestBody = ProviderTokenRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -415,6 +490,9 @@ type ServerInterface interface {
 	// Logout End the session
 	// (POST /v1/auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
+	// ListProviders Identity providers this server can actually serve
+	// (GET /v1/auth/providers)
+	ListProviders(w http.ResponseWriter, r *http.Request)
 	// RefreshSession Rotate the refresh token and get a new access token
 	// (POST /v1/auth/refresh)
 	RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams)
@@ -424,12 +502,30 @@ type ServerInterface interface {
 	// VerifyEmail Confirm an email address with a token
 	// (POST /v1/auth/verify-email)
 	VerifyEmail(w http.ResponseWriter, r *http.Request)
+	// CompleteProviderSignIn Finish the browser sign-in flow
+	// (GET /v1/auth/{provider}/callback)
+	CompleteProviderSignIn(w http.ResponseWriter, r *http.Request, provider ProviderCode, params CompleteProviderSignInParams)
+	// StartProviderSignIn Begin the browser sign-in flow
+	// (GET /v1/auth/{provider}/start)
+	StartProviderSignIn(w http.ResponseWriter, r *http.Request, provider ProviderCode, params StartProviderSignInParams)
+	// SignInWithProviderToken Sign in with an ID token obtained by a native app
+	// (POST /v1/auth/{provider}/token)
+	SignInWithProviderToken(w http.ResponseWriter, r *http.Request, provider ProviderCode, params SignInWithProviderTokenParams)
 	// Calculate Evaluate one arithmetic operation
 	// (POST /v1/calculations)
 	Calculate(w http.ResponseWriter, r *http.Request)
 	// GetMe The authenticated user and its active login methods
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// ListIdentities Providers linked to this account
+	// (GET /v1/me/identities)
+	ListIdentities(w http.ResponseWriter, r *http.Request)
+	// UnlinkIdentity Remove a provider from this account
+	// (POST /v1/me/identities/{id}/unlink)
+	UnlinkIdentity(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// LinkIdentity Link a provider to this account
+	// (POST /v1/me/identities/{provider})
+	LinkIdentity(w http.ResponseWriter, r *http.Request, provider ProviderCode)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -545,6 +641,20 @@ func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
+// ListProviders operation middleware
+func (siw *ServerInterfaceWrapper) ListProviders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProviders(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RefreshSession operation middleware
 func (siw *ServerInterfaceWrapper) RefreshSession(w http.ResponseWriter, r *http.Request) {
 
@@ -629,6 +739,153 @@ func (siw *ServerInterfaceWrapper) VerifyEmail(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteProviderSignIn operation middleware
+func (siw *ServerInterfaceWrapper) CompleteProviderSignIn(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "provider" -------------
+	var provider ProviderCode
+
+	err = runtime.BindStyledParameterWithOptions("simple", "provider", r.PathValue("provider"), &provider, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompleteProviderSignInParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteProviderSignIn(w, r, provider, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartProviderSignIn operation middleware
+func (siw *ServerInterfaceWrapper) StartProviderSignIn(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "provider" -------------
+	var provider ProviderCode
+
+	err = runtime.BindStyledParameterWithOptions("simple", "provider", r.PathValue("provider"), &provider, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StartProviderSignInParams
+
+	// ------------- Optional query parameter "redirect_to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "redirect_to", r.URL.Query(), &params.RedirectTo, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "redirect_to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "redirect_to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartProviderSignIn(w, r, provider, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SignInWithProviderToken operation middleware
+func (siw *ServerInterfaceWrapper) SignInWithProviderToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "provider" -------------
+	var provider ProviderCode
+
+	err = runtime.BindStyledParameterWithOptions("simple", "provider", r.PathValue("provider"), &provider, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SignInWithProviderTokenParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Client-Platform" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Platform")]; found {
+		var XClientPlatform SignInWithProviderTokenParamsXClientPlatform
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Platform", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Platform", valueList[0], &XClientPlatform, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Platform", Err: err})
+			return
+		}
+
+		params.XClientPlatform = &XClientPlatform
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SignInWithProviderToken(w, r, provider, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Calculate operation middleware
 func (siw *ServerInterfaceWrapper) Calculate(w http.ResponseWriter, r *http.Request) {
 
@@ -648,6 +905,72 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListIdentities operation middleware
+func (siw *ServerInterfaceWrapper) ListIdentities(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIdentities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnlinkIdentity operation middleware
+func (siw *ServerInterfaceWrapper) UnlinkIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnlinkIdentity(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LinkIdentity operation middleware
+func (siw *ServerInterfaceWrapper) LinkIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "provider" -------------
+	var provider ProviderCode
+
+	err = runtime.BindStyledParameterWithOptions("simple", "provider", r.PathValue("provider"), &provider, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LinkIdentity(w, r, provider)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -781,6 +1104,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.LoginUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/providers", wrapper.ListProviders)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/{provider}/start", wrapper.StartProviderSignIn)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/{provider}/callback", wrapper.CompleteProviderSignIn)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/{provider}/token", wrapper.SignInWithProviderToken)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/identities", wrapper.ListIdentities)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{provider}", wrapper.LinkIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/unlink", wrapper.UnlinkIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/verify-email", wrapper.VerifyEmail)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calculations", wrapper.Calculate)
@@ -795,6 +1125,10 @@ type BadRequestJSONResponse Error
 type ConflictJSONResponse Error
 
 type ForbiddenJSONResponse Error
+
+type NotFoundJSONResponse Error
+
+type NotImplementedJSONResponse Error
 
 type TooManyRequestsJSONResponse Error
 
@@ -952,6 +1286,27 @@ type Logout204Response struct {
 func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type ListProvidersRequestObject struct {
+}
+
+type ListProvidersResponseObject interface {
+	VisitListProvidersResponse(w http.ResponseWriter) error
+}
+
+type ListProviders200JSONResponse []ProviderInfo
+
+func (response ListProviders200JSONResponse) VisitListProvidersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type RefreshSessionRequestObject struct {
@@ -1113,6 +1468,220 @@ func (response VerifyEmail410JSONResponse) VisitVerifyEmailResponse(w http.Respo
 	return err
 }
 
+type CompleteProviderSignInRequestObject struct {
+	Provider ProviderCode `json:"provider"`
+	Params   CompleteProviderSignInParams
+}
+
+type CompleteProviderSignInResponseObject interface {
+	VisitCompleteProviderSignInResponse(w http.ResponseWriter) error
+}
+
+type CompleteProviderSignIn302ResponseHeaders struct {
+	Location *string
+}
+
+type CompleteProviderSignIn302Response struct {
+	Headers CompleteProviderSignIn302ResponseHeaders
+}
+
+func (response CompleteProviderSignIn302Response) VisitCompleteProviderSignInResponse(w http.ResponseWriter) error {
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(302)
+	return nil
+}
+
+type CompleteProviderSignIn400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CompleteProviderSignIn400JSONResponse) VisitCompleteProviderSignInResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteProviderSignIn403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CompleteProviderSignIn403JSONResponse) VisitCompleteProviderSignInResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteProviderSignIn409JSONResponse struct{ ConflictJSONResponse }
+
+func (response CompleteProviderSignIn409JSONResponse) VisitCompleteProviderSignInResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteProviderSignIn501JSONResponse struct{ NotImplementedJSONResponse }
+
+func (response CompleteProviderSignIn501JSONResponse) VisitCompleteProviderSignInResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartProviderSignInRequestObject struct {
+	Provider ProviderCode `json:"provider"`
+	Params   StartProviderSignInParams
+}
+
+type StartProviderSignInResponseObject interface {
+	VisitStartProviderSignInResponse(w http.ResponseWriter) error
+}
+
+type StartProviderSignIn302ResponseHeaders struct {
+	Location *string
+}
+
+type StartProviderSignIn302Response struct {
+	Headers StartProviderSignIn302ResponseHeaders
+}
+
+func (response StartProviderSignIn302Response) VisitStartProviderSignInResponse(w http.ResponseWriter) error {
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(302)
+	return nil
+}
+
+type StartProviderSignIn501JSONResponse struct{ NotImplementedJSONResponse }
+
+func (response StartProviderSignIn501JSONResponse) VisitStartProviderSignInResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderTokenRequestObject struct {
+	Provider ProviderCode `json:"provider"`
+	Params   SignInWithProviderTokenParams
+	Body     *SignInWithProviderTokenJSONRequestBody
+}
+
+type SignInWithProviderTokenResponseObject interface {
+	VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error
+}
+
+type SignInWithProviderToken200JSONResponse TokenPair
+
+func (response SignInWithProviderToken200JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderToken400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SignInWithProviderToken400JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderToken401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SignInWithProviderToken401JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderToken403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SignInWithProviderToken403JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderToken409JSONResponse struct{ ConflictJSONResponse }
+
+func (response SignInWithProviderToken409JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignInWithProviderToken501JSONResponse struct{ NotImplementedJSONResponse }
+
+func (response SignInWithProviderToken501JSONResponse) VisitSignInWithProviderTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CalculateRequestObject struct {
 	Body *CalculateJSONRequestBody
 }
@@ -1212,6 +1781,178 @@ func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 	return err
 }
 
+type ListIdentitiesRequestObject struct {
+}
+
+type ListIdentitiesResponseObject interface {
+	VisitListIdentitiesResponse(w http.ResponseWriter) error
+}
+
+type ListIdentities200JSONResponse []Identity
+
+func (response ListIdentities200JSONResponse) VisitListIdentitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIdentities401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListIdentities401JSONResponse) VisitListIdentitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UnlinkIdentityRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type UnlinkIdentityResponseObject interface {
+	VisitUnlinkIdentityResponse(w http.ResponseWriter) error
+}
+
+type UnlinkIdentity204Response struct {
+}
+
+func (response UnlinkIdentity204Response) VisitUnlinkIdentityResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type UnlinkIdentity401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UnlinkIdentity401JSONResponse) VisitUnlinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UnlinkIdentity404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UnlinkIdentity404JSONResponse) VisitUnlinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UnlinkIdentity409JSONResponse struct{ ConflictJSONResponse }
+
+func (response UnlinkIdentity409JSONResponse) VisitUnlinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LinkIdentityRequestObject struct {
+	Provider ProviderCode `json:"provider"`
+	Body     *LinkIdentityJSONRequestBody
+}
+
+type LinkIdentityResponseObject interface {
+	VisitLinkIdentityResponse(w http.ResponseWriter) error
+}
+
+type LinkIdentity201JSONResponse Identity
+
+func (response LinkIdentity201JSONResponse) VisitLinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LinkIdentity401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response LinkIdentity401JSONResponse) VisitLinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LinkIdentity403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response LinkIdentity403JSONResponse) VisitLinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LinkIdentity409JSONResponse struct{ ConflictJSONResponse }
+
+func (response LinkIdentity409JSONResponse) VisitLinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LinkIdentity501JSONResponse struct{ NotImplementedJSONResponse }
+
+func (response LinkIdentity501JSONResponse) VisitLinkIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetHealthz Liveness probe
@@ -1226,6 +1967,9 @@ type StrictServerInterface interface {
 	// Logout End the session
 	// (POST /v1/auth/logout)
 	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
+	// ListProviders Identity providers this server can actually serve
+	// (GET /v1/auth/providers)
+	ListProviders(ctx context.Context, request ListProvidersRequestObject) (ListProvidersResponseObject, error)
 	// RefreshSession Rotate the refresh token and get a new access token
 	// (POST /v1/auth/refresh)
 	RefreshSession(ctx context.Context, request RefreshSessionRequestObject) (RefreshSessionResponseObject, error)
@@ -1235,12 +1979,30 @@ type StrictServerInterface interface {
 	// VerifyEmail Confirm an email address with a token
 	// (POST /v1/auth/verify-email)
 	VerifyEmail(ctx context.Context, request VerifyEmailRequestObject) (VerifyEmailResponseObject, error)
+	// CompleteProviderSignIn Finish the browser sign-in flow
+	// (GET /v1/auth/{provider}/callback)
+	CompleteProviderSignIn(ctx context.Context, request CompleteProviderSignInRequestObject) (CompleteProviderSignInResponseObject, error)
+	// StartProviderSignIn Begin the browser sign-in flow
+	// (GET /v1/auth/{provider}/start)
+	StartProviderSignIn(ctx context.Context, request StartProviderSignInRequestObject) (StartProviderSignInResponseObject, error)
+	// SignInWithProviderToken Sign in with an ID token obtained by a native app
+	// (POST /v1/auth/{provider}/token)
+	SignInWithProviderToken(ctx context.Context, request SignInWithProviderTokenRequestObject) (SignInWithProviderTokenResponseObject, error)
 	// Calculate Evaluate one arithmetic operation
 	// (POST /v1/calculations)
 	Calculate(ctx context.Context, request CalculateRequestObject) (CalculateResponseObject, error)
 	// GetMe The authenticated user and its active login methods
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// ListIdentities Providers linked to this account
+	// (GET /v1/me/identities)
+	ListIdentities(ctx context.Context, request ListIdentitiesRequestObject) (ListIdentitiesResponseObject, error)
+	// UnlinkIdentity Remove a provider from this account
+	// (POST /v1/me/identities/{id}/unlink)
+	UnlinkIdentity(ctx context.Context, request UnlinkIdentityRequestObject) (UnlinkIdentityResponseObject, error)
+	// LinkIdentity Link a provider to this account
+	// (POST /v1/me/identities/{provider})
+	LinkIdentity(ctx context.Context, request LinkIdentityRequestObject) (LinkIdentityResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1399,6 +2161,30 @@ func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request, params L
 	}
 }
 
+// ListProviders operation middleware
+func (sh *strictHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
+	var request ListProvidersRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProviders(ctx, request.(ListProvidersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProviders")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProvidersResponseObject); ok {
+		if err := validResponse.VisitListProvidersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // RefreshSession operation middleware
 func (sh *strictHandler) RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams) {
 	var request RefreshSessionRequestObject
@@ -1497,6 +2283,94 @@ func (sh *strictHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CompleteProviderSignIn operation middleware
+func (sh *strictHandler) CompleteProviderSignIn(w http.ResponseWriter, r *http.Request, provider ProviderCode, params CompleteProviderSignInParams) {
+	var request CompleteProviderSignInRequestObject
+
+	request.Provider = provider
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteProviderSignIn(ctx, request.(CompleteProviderSignInRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteProviderSignIn")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteProviderSignInResponseObject); ok {
+		if err := validResponse.VisitCompleteProviderSignInResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartProviderSignIn operation middleware
+func (sh *strictHandler) StartProviderSignIn(w http.ResponseWriter, r *http.Request, provider ProviderCode, params StartProviderSignInParams) {
+	var request StartProviderSignInRequestObject
+
+	request.Provider = provider
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartProviderSignIn(ctx, request.(StartProviderSignInRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartProviderSignIn")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartProviderSignInResponseObject); ok {
+		if err := validResponse.VisitStartProviderSignInResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SignInWithProviderToken operation middleware
+func (sh *strictHandler) SignInWithProviderToken(w http.ResponseWriter, r *http.Request, provider ProviderCode, params SignInWithProviderTokenParams) {
+	var request SignInWithProviderTokenRequestObject
+
+	request.Provider = provider
+	request.Params = params
+
+	var body SignInWithProviderTokenJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SignInWithProviderToken(ctx, request.(SignInWithProviderTokenRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SignInWithProviderToken")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SignInWithProviderTokenResponseObject); ok {
+		if err := validResponse.VisitSignInWithProviderTokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Calculate operation middleware
 func (sh *strictHandler) Calculate(w http.ResponseWriter, r *http.Request) {
 	var request CalculateRequestObject
@@ -1552,65 +2426,167 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListIdentities operation middleware
+func (sh *strictHandler) ListIdentities(w http.ResponseWriter, r *http.Request) {
+	var request ListIdentitiesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListIdentities(ctx, request.(ListIdentitiesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListIdentities")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListIdentitiesResponseObject); ok {
+		if err := validResponse.VisitListIdentitiesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UnlinkIdentity operation middleware
+func (sh *strictHandler) UnlinkIdentity(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UnlinkIdentityRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UnlinkIdentity(ctx, request.(UnlinkIdentityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UnlinkIdentity")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UnlinkIdentityResponseObject); ok {
+		if err := validResponse.VisitUnlinkIdentityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LinkIdentity operation middleware
+func (sh *strictHandler) LinkIdentity(w http.ResponseWriter, r *http.Request, provider ProviderCode) {
+	var request LinkIdentityRequestObject
+
+	request.Provider = provider
+
+	var body LinkIdentityJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LinkIdentity(ctx, request.(LinkIdentityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LinkIdentity")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LinkIdentityResponseObject); ok {
+		if err := validResponse.VisitLinkIdentityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"3ny8+e8A",
+	"3Ft7c9s4kv8qXbz7Y7eOluUks7Wrq6s6x0luvOs8ynZm7mqUykJES8SYBDgAaEWb8ne/6gb4kijbedg1",
+	"u//ZFAk0+vnrBz4nmSkro1F7l8w+J5WwokSPlv87KRRq/64QfmlsSU8kusyqyiujk1nyAjMl0UFu1uBz",
+	"BItLiy4Hb65Qg3IgsVDXaFFOYJ6scTFPYIXegfKgNAg917n31VtdbCAz5kohCC1B4zVaeiGs6SqjHcLC",
+	"yE0KzoCAQANkQmvjwaKQc638BI71xudKrwALh/2dfB6+B2+gqvmRw6y2CM4bK1Y4meskTRQdKkch0SZp",
+	"okWJySz534PAhoOWD2nishxLQQxBXZfJ7Bc6HC1gXJImQktrlEw+pInfVLSG81bpVXJzkybvrLlWEu2J",
+	"kbjL0eZXyIzEFISDQjmPEhYbOLw+OhS1zw+r+JKbNDRXwucdxc3vSZpY/K1WFmUy87bGAeGfRFkV9PrK",
+	"mFWByRix50GgJyybXWp/ztEirHEBGbPIQSas3ezqwgReYFYIixL4E2f4nSDzuVYOKmE9mGV8rL0VmQcr",
+	"fI4WfC5IWaDW0mR1iZoY4pREyHKhNRY96YUlO15EMj4yGQPJbZ/2Jk0aXWPlfy7kOf5Wo/P0H9GEmv8U",
+	"VVWoTBAPDn91xIjPvWX/3eIymSX/dtgZ1mH41R2+tNbYsNWQka9FQZqFEmzc8iZNToxeFip7hO2bnRys",
+	"lc8BPynnyYycFx6JlFfGLpSUqB+eluPa56g9rUpqX3sgGxdFYdYoiZY3xr8ytZYPT8obA67OcmCfkoKx",
+	"TMrG1NZFQk7JhIJCPgY5nkxjqVY1GZIht6YcOLTXaImgS2NeC72JWusenqJz4REKVSofRPNek38yVv3j",
+	"MfjxWjlHWmooVlyLQkkQWYbOBZ9DBP1ET3nTV0IVj0HUz1gUB9GWSXmXvC9ct4SwX43L0C6k76/R50a6",
+	"MQcrfHCJ7F9BI0o6HkiOvLBAv0bUME8u0EMlnFsbK+cJh9F5cpILvcK57n5I+Zd1jppXUU4sCoRaF0pf",
+	"Kb0KjrSypkLrVfCDSpI5tv95LN1d3DkNn2xIBNHNCmsF/9/Q0nPBC2MKFIEzXcD6pXs17RPRRVWz+BWz",
+	"4CpFkdUF87fns4fnuFOmbyu0QrMiL77gXdojSLYHB4Qkql294ECWpElZF15VxSZJE6koOo+jg/7xu4XT",
+	"RCRE1J1Hd3UxcnLbPu+C/tHTyQ/JXRTED8e2DQaws1U2imouPKsZ/QhLY1u04A0srNBZDkZP4A3Dvox1",
+	"1oHRGYLFAoVDGfSyo/7l+fnH4/eXP348ffPT8dnpi48n5y9fvHxzeXp8drF7KrJRL1QxYmDv0B4sFRYS",
+	"kA7kUqavs1a239pigFr30X1mzAveb0z9S3ROrEZ49GNdCn1AWJZ4NYE3by9BtFAohVJsIm9AeBB6A16V",
+	"OLlThiyRbt+9sowk70iUuTOClwZHuZ2EsMTtNPyIovD5hRe+drtEuPZ5Y2Dm6m4Dil+Nbdd6qJ2tsIxs",
+	"2DmvYjaQbxc+mSV1reSYrrXo+74gu08yL9muMEb5mVmp/U6upb7b2ZkSjcb/jk8mmSlHye755faMPQ98",
+	"O91h394qY6S/xhGvXPv8Y9nFv9tMqx8qb9LurC25DRU7h+MfPl6jVUuFo6HnnuIdE1ez69Ym6fBsYwxp",
+	"osiOMzjmAF+KAnRdLtCm4FB7SgcFBFII/lW1rYzDCRzDXy/evonvhrybzJ6yYu0pYV4WRvg/PYMFLo1F",
+	"9h4BNgafbGvtAjKYTo7gP2A6eUKriILc0Wau19boFaWgnvBIZZT2E7jMEQrUK59DJiq4QqyYPKVXBTZ5",
+	"DCytKUE4AhdzTb5V2IXyVlhVbKAQltyZVT4v0ats280fTTlIleLTGW+UzP70bES6TdJ8qpdmf0i62xYp",
+	"NLuqEJuPIXnsf/M/97Pf6G0H64xJviH5kpDqXmtWMuatd7rY9s2xzc5RSKXRuZMcs6vdbbCJ5VtRGz0Y",
+	"Ks0wXDRX/7UUhcM2TgtrFTpQ2qPVooAQYydjbN1lZ2WcX1l0Y2+bq3tgQ14yHYaBkRPvCygZceL+gHaL",
+	"gyNxfTRCEfBYWSFR3jtYpQ1p48fiYsZefRkWO3YE+qoPvciSc1NITi/4A/qrdFhco5vAz72ijimpiubn",
+	"eoGZqB32ajedGvhgvLuHHDnFSjmP9tuDWM8xPPnh2R1BbTt51KqsSzh6QqiKIBbV0yAsR86Pzsjab+sC",
+	"Z8BK4RR9zU/cXFe1y6FCUxXEwLWw0kFlUaoswF1XL5xXvqZvXODOWGAdHOJPaVIq3fx/9OS7xN2G4Sjf",
+	"O7S38Pv3GUjHjsR+851QI6cJNYC9jpPiS6Usuo9Kj/m8zGjpoNZeFawD/ZICxE8n/Sj1l+m0JVBpj6tQ",
+	"jLnDFo8XHNEpIvbqpzPacgMWM1TX2JbJYatKTnHdeRQyhXWusny0JD5qj2nC9HwMjztn9RyFHQDOPXIa",
+	"MHew2ICvYyL7ieS5eUmy3Wv594x2+0Id+WHMaqv85oI8d1h0wWcj8Nj996rRzr/+fNlUhVmN+deOb8T4",
+	"UOZREVwMxXhJFbi2Xh3dhjO1zZCr2bb2+QR+FFoWaB0Ii7BCjZaLm4yNlA9NDT3XqqkmhtSTXbQ06Ljs",
+	"WAqf5bBWRcH/kj9SBfUt5vrk7et3x5enz0/PTi//D87fn728gD9cH/1xNtcAB3AspfLqOrizCZxjaa4J",
+	"QQrgxCwNaWV4QsfmSmcprnrv0EIAjQjonAuL8Q0t4eQULJIIuN/yByOcVMvlHydhfwKKfydg9HdKrGui",
+	"AzjlpHUEVPWiUFnLxAm81RmCiCYBtePokgYSlI/doVgmiFucxEj1+v3FJXhTMIOBlDts6YJdSQPBOjKz",
+	"0srFro9XPsLCA1GpA+eF9awD12hdEPPRZDqZxmKPFpVKZsnTyXTylD2vz1nNDnNOYf9Bf6/Q7+rKOfra",
+	"agdPplMy2yLE0coadjCMt9U1TuDS1FnOUgeJFWqJOtuQy2kLQqeSECn6H+OOW52LJ9Ppdyt0DvLykXrn",
+	"uy3ygxHWZSnsJpklZ+oaNf1eWbNg+CxWjkw4MCv5QK8fcppxP8Z1gJTUYNPjEJHAC4E3IbsBb8VyqbJR",
+	"3p2HPR+QddsgdKyAPkovKdoP06ePScjxFiObILLZkme71O0CbTqVBRUr2M2b4O6HYuBaBmOSdNB5/mX8",
+	"PN0rh1ud6ZsPIUCg88+N3Hw3zg2KLTc3N9sN1ZsHVJ8O4tzVJSN9eTad7luwpfCw19LkT44eoR/CpYPM",
+	"IhfcROFC4YCb8cpBqOtnoiCbjs1eBAaAoQ3pwNi5pocNxKXPuCCRgqEv1oozEuUAteTaBCwwMyVScKkd",
+	"2rmmQBD1DowVGcfNwIKnd3Ota37SF0/+cvcX2424PjBJZr986FvUy0+xqhsOTeG0PSnXS/Swq9VZnKjH",
+	"7M3Uvm9w2/7m2lyFaAjr3BQI1kS0keVC6ZQN/9fa+V5aWFl03OIMQGWuM1NtwAv6DYUtVDeswYuEApSQ",
+	"4I2ZwHGxFhtHjdQMUbpZG9lJqsLDWnCKWXsoa9dE9wXtXUgGwA6cJ9Tj1EoT9tAhau94Ejr4l7qR4XzD",
+	"Q3mRrbT9ZnfW4Mn02Vgu4hxJBrVEebsO6ZDGu/DF7TrSTo/sjbfPjc8BNSWxspGsFF4shAsDOnu70HE+",
+	"pxFwEKalAxD4pYaob4BtzFTWxl6NClQ5/66l9Bvd7L1qPIMq4k6FZxT5ROpuE03TaICW7X1+ERdAZL4W",
+	"RRFLsrcLL2aV+y38JaOi+BqUioxLgMZ1NGYSn6NIHyscBYkQJ/AuGDkj+rlu6kFsn20hmD/0UKLQDvza",
+	"8NCO4vkvttW0meuhhSzO9dC5BIBGDkgyGT2NJR13Y2oQTeeiVexvgwnpP5FHeCQkcU4yQjms+K0wBADS",
+	"m62hvkE9gmLB+NgeBfg2yP4+ocl7faXNWqexqiPTVjuNHap8wCxLU1vO4I2mA7s1QYuev2tcGiPjro8c",
+	"GMfafZujCHIYGaMk1pI8ghXfHwvYWPXbD7+bumBE4A+j6MNa770w9NF33z5WPseAdJaZmmRnMZgBDX1F",
+	"p0T41Lka5ayHShmlLBCa8uRcL5V1PoWmOC5qbw7iPA3ZysXF2whzPXW8fOjQcR7rxBI5mQ0ItzAEhMM2",
+	"5HYpZKD+Fiu6B1ZtpwwZ3D65+4OdmarbtPqE2RpBLDOaJwyFHoG7t6sz83tz0Naqx1W6V2R8II0eKWPe",
+	"S6lHAB4v0irS1wr5aPrwrvKyV/0euMfa3aUABBVt2ZO4lBZdnDQV93FknxvodHOYiaJYiOxqL3S9QO8G",
+	"PrQXnyxKZblISUuAD1hFVFVw733POtdxeH1ByoXFhvOiqhBZh4jfn59R+R0t1+nXpqYhIi2hruiNhTVr",
+	"zj1z5byxm0jBEq1FC2HG3M0aCoAO5mAb5hGNK+7C4hg4OjFUMPbYINELtdKnXw6SBhPpBJF4kPq3Gu2m",
+	"m6MOo8C3DZTvlOzHF4od8vuv82HLlJ5On4wltkG226JNg56NaIRDn6Rx2J/XPTNZO8a3n5qbr3XFX1xo",
+	"+FLn/cP06O4PtmaWb7PcV0orF1gXlZlT8AOlaZxkfW+b5Xr6LbXdzNiYjLCOUQmCGwBawru/nbxs/KNt",
+	"Uian6GaEz1F3Fk0ZS1NN522DSfOC8R4KemwGX6lQER0JFzld24SZ60xUnhPb9o3352cNslsgWKTBDpRj",
+	"9nhBJ/3exjh244ILxloOZCOWHi03oSfwOmIUAdSdgAWulNYER8gY5rod0nGFcPmMPV/lY7unLgo+crja",
+	"wV6tFFexwiY0mIrcY8P53s2LLTtv3vjoTfL9zHtLzF9rwd/bVp4Th7/dVNr253huT/MbWnArbzDGsTL9",
+	"ch13FftMgosXf5vATy1eXWyYOkF6ngaEa1MQtVTIhkdXLQrlPJsgx/wNm5PF0BkIBjrX/GQwEhLSoKA0",
+	"CwRXV1WxIb1aUEXJ8V0xs2Rr4771XBONocFJdyz+c8BCYl3bUvVU8UXLCj1qe2xuPyufD0arvt3+fh+N",
+	"iNF5sX/RhsTtnwzumPxzRlbSVcKITSp0+iKarll4oXS47ScaUxdVtdeBZN3wv9ufFDVXBPCBUqKR2xeP",
+	"rJq7lyBGm63hl0fUza/Pp7vaPg0wCB+rTu2oLPRvhzTK0aiDsZ2KlNjDXjtd8Nf4kB3w1zh627C2Nk52",
+	"2K9k7YBDnLwNbg3WDIg01aQdldfJjLgVDc00dsczGtDteHU4vO00yjZqTZx2rz1Gb2L/hapd9p4pTTXM",
+	"3kG+A4/bZgcUYXlvIiIMZZ37MPTws5I3h+Gu2W0tymXtGqiu/HAUk0oIAciKMDYRPOkELsJ8KDU15zp2",
+	"CuuqKTK0SKgrUzuuqLad1oBZun5yYbKrue4GYrlBWaEtBTGt2IxBkPd8slZUO8hj5KY2jz3uT4XvmqH8",
+	"cJ8qUyAL5VeqAX307F7hL9zK/fIAuzVgUppr7Mss4tkv1bUWVe9XtTd8m1KbWJkKg9ezNj9EC3mv+UUL",
+	"ogyDZGYd2p5zHWkK+Wat1W81gtISP/EFjb7euZqnFHl8gVC786ZyYDTOdfdeWA0WyNmY9yLLo7GtDbs1",
+	"N94svU3vvgjx/u7w6/drBnROdJ/T/JcEob1ZPH3VN6y7XPgQwQ7naH/5QJoSKjJBy4b85FZGkia1LeIU",
+	"7ezwkB/mxvnZn6d/nrKuxR0/74gjjg2GqmmcOev8Zhw2262PhIZPMI00xnxaA3ul9qyBTXExUY8uNQ4r",
+	"us/KsfrMcQvQuhd7qOzmw83/DwA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

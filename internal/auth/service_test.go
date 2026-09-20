@@ -220,13 +220,15 @@ func (m *fakeMailer) SendEmailVerification(_ context.Context, _, tok string) err
 }
 
 type fakeStore struct {
-	byEmail  map[string]auth.User
-	byID     map[uuid.UUID]auth.User
-	tokens   map[string]auth.VerificationToken
-	refresh  map[string]*storedRefresh
-	now      time.Time
-	issuer   *token.HS256
-	verifier *token.HS256
+	byEmail    map[string]auth.User
+	byID       map[uuid.UUID]auth.User
+	tokens     map[string]auth.VerificationToken
+	refresh    map[string]*storedRefresh
+	identities map[uuid.UUID]auth.Identity
+	states     map[string]auth.OAuthState
+	now        time.Time
+	issuer     *token.HS256
+	verifier   *token.HS256
 }
 
 type storedRefresh struct {
@@ -241,13 +243,15 @@ type storedRefresh struct {
 func newFakeStore() *fakeStore {
 	signer := token.NewHS256([]byte(strings.Repeat("s", 32)), "k1", 15*time.Minute)
 	return &fakeStore{
-		byEmail:  map[string]auth.User{},
-		byID:     map[uuid.UUID]auth.User{},
-		tokens:   map[string]auth.VerificationToken{},
-		refresh:  map[string]*storedRefresh{},
-		now:      time.Now(),
-		issuer:   signer,
-		verifier: signer,
+		byEmail:    map[string]auth.User{},
+		byID:       map[uuid.UUID]auth.User{},
+		tokens:     map[string]auth.VerificationToken{},
+		refresh:    map[string]*storedRefresh{},
+		identities: map[uuid.UUID]auth.Identity{},
+		states:     map[string]auth.OAuthState{},
+		now:        time.Now(),
+		issuer:     signer,
+		verifier:   signer,
 	}
 }
 
@@ -354,4 +358,97 @@ func (s *fakeStore) countLive() int {
 		}
 	}
 	return live
+}
+
+func (s *fakeStore) IdentityByProviderSubject(_ context.Context, provider, subject string) (auth.Identity, error) {
+	for _, i := range s.identities {
+		if i.Provider == provider && i.Subject == subject {
+			return i, nil
+		}
+	}
+	return auth.Identity{}, auth.ErrIdentityNotFound
+}
+
+func (s *fakeStore) IdentitiesByUser(_ context.Context, userID uuid.UUID) ([]auth.Identity, error) {
+	out := []auth.Identity{}
+	for _, i := range s.identities {
+		if i.UserID == userID {
+			out = append(out, i)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) CreateIdentity(_ context.Context, userID uuid.UUID, i auth.Identity) (auth.Identity, error) {
+	for _, existing := range s.identities {
+		if existing.Provider == i.Provider && existing.Subject == i.Subject {
+			return auth.Identity{}, auth.ErrIdentityAlreadyLinked
+		}
+	}
+	i.UserID = userID
+	s.identities[i.ID] = i
+	return i, nil
+}
+
+func (s *fakeStore) CreateUserWithIdentity(_ context.Context, email string, i auth.Identity) (auth.User, error) {
+	if _, exists := s.byEmail[email]; exists {
+		return auth.User{}, auth.ErrEmailTaken
+	}
+
+	verified := s.now
+	user := auth.User{
+		ID:              uuid.Must(uuid.NewV7()),
+		Email:           email,
+		EmailVerifiedAt: &verified,
+		CreatedAt:       s.now,
+	}
+	s.byEmail[email] = user
+	s.byID[user.ID] = user
+
+	i.UserID = user.ID
+	s.identities[i.ID] = i
+	return user, nil
+}
+
+func (s *fakeStore) DeleteIdentity(_ context.Context, id, userID uuid.UUID) error {
+	i, ok := s.identities[id]
+	if !ok || i.UserID != userID {
+		return auth.ErrIdentityNotFound
+	}
+	delete(s.identities, id)
+	return nil
+}
+
+func (s *fakeStore) CountAuthMethods(_ context.Context, userID uuid.UUID) (int, error) {
+	count := 0
+	if user, ok := s.byID[userID]; ok && user.HasPassword() {
+		count++
+	}
+	for _, i := range s.identities {
+		if i.UserID == userID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *fakeStore) EnabledProviders(context.Context) ([]auth.ProviderInfo, error) {
+	return []auth.ProviderInfo{
+		{Code: "google", DisplayName: "Google"},
+		{Code: "microsoft", DisplayName: "Microsoft"},
+	}, nil
+}
+
+func (s *fakeStore) CreateOAuthState(_ context.Context, st auth.OAuthState) error {
+	s.states[st.State] = st
+	return nil
+}
+
+func (s *fakeStore) ConsumeOAuthState(_ context.Context, state string) (auth.OAuthState, error) {
+	st, ok := s.states[state]
+	if !ok || !s.now.Before(st.ExpiresAt) {
+		return auth.OAuthState{}, auth.ErrOAuthStateInvalid
+	}
+	delete(s.states, state)
+	return st, nil
 }

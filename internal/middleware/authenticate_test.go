@@ -50,7 +50,7 @@ func TestValidTokenReachesTheHandlerWithTheUserID(t *testing.T) {
 	require.NoError(t, err)
 
 	var got uuid.UUID
-	handler := middleware.Authenticate(signer, public)(http.HandlerFunc(
+	handler := middleware.Authenticate(signer, public, nil)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			id, ok := middleware.UserID(r.Context())
 			require.True(t, ok)
@@ -121,7 +121,67 @@ func call(t *testing.T, path, authHeader string) (*httptest.ResponseRecorder, *b
 	t.Helper()
 
 	reached := false
-	handler := middleware.Authenticate(newSigner(), public)(http.HandlerFunc(
+	handler := middleware.Authenticate(newSigner(), public, nil)(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			reached = true
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec, &reached
+}
+
+var patterns = []string{"/v1/auth/{provider}/start", "/v1/auth/{provider}/callback"}
+
+func TestPatternRoutesArePublic(t *testing.T) {
+	t.Parallel()
+
+	open := []string{
+		"/v1/auth/google/start",
+		"/v1/auth/google/callback",
+		"/v1/auth/microsoft/start",
+	}
+	for _, path := range open {
+		t.Run("open "+path, func(t *testing.T) {
+			t.Parallel()
+
+			rec, reached := callWith(t, path, "", patterns)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.True(t, *reached)
+		})
+	}
+
+	// A {provider} matches exactly one segment, so the pattern never opens a
+	// whole subtree. This is what keeps a new authenticated route under
+	// /v1/auth/ protected by default.
+	closed := []string{
+		"/v1/auth/google",
+		"/v1/auth/google/start/extra",
+		"/v1/auth/google/token",
+		"/v1/auth//start",
+		"/v1/me",
+	}
+	for _, path := range closed {
+		t.Run("closed "+path, func(t *testing.T) {
+			t.Parallel()
+
+			rec, reached := callWith(t, path, "", patterns)
+			require.Equal(t, http.StatusUnauthorized, rec.Code)
+			require.False(t, *reached)
+		})
+	}
+}
+
+func callWith(t *testing.T, path, authHeader string, patterns []string) (*httptest.ResponseRecorder, *bool) {
+	t.Helper()
+
+	reached := false
+	handler := middleware.Authenticate(newSigner(), public, patterns)(http.HandlerFunc(
 		func(w http.ResponseWriter, _ *http.Request) {
 			reached = true
 			w.WriteHeader(http.StatusOK)

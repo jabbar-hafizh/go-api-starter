@@ -22,10 +22,14 @@ func (s *Service) Account(ctx context.Context, userID uuid.UUID) (Account, error
 		return Account{}, err
 	}
 
+	identities, err := s.store.IdentitiesByUser(ctx, userID)
+	if err != nil {
+		return Account{}, err
+	}
+
 	return Account{
 		User:        user,
 		HasPassword: user.HasPassword(),
-		// Always empty until phase 4 introduces auth_identities.
-		Identities: []Identity{},
+		Identities:  identities,
 	}, nil
 }

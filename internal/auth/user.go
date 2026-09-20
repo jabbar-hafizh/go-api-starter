@@ -21,10 +21,3 @@ func (u User) HasPassword() bool { return u.PasswordHash != nil && *u.PasswordHa
 
 // EmailVerified reports whether the address has been proven.
 func (u User) EmailVerified() bool { return u.EmailVerifiedAt != nil }
-
-// Identity links an account to an external provider. Empty until phase 4.
-type Identity struct {
-	ID       uuid.UUID
-	Provider string
-	Email    *string
-}

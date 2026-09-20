@@ -35,6 +35,34 @@ type store interface {
 	UseRefreshToken(ctx context.Context, tokenHash []byte) (RefreshTokenUse, error)
 	RefreshTokenByHash(ctx context.Context, tokenHash []byte) (RefreshTokenStatus, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
+
+	IdentityByProviderSubject(ctx context.Context, provider, subject string) (Identity, error)
+	IdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]Identity, error)
+	CreateIdentity(ctx context.Context, userID uuid.UUID, i Identity) (Identity, error)
+	CreateUserWithIdentity(ctx context.Context, email string, i Identity) (User, error)
+	DeleteIdentity(ctx context.Context, id, userID uuid.UUID) error
+	CountAuthMethods(ctx context.Context, userID uuid.UUID) (int, error)
+	EnabledProviders(ctx context.Context) ([]ProviderInfo, error)
+
+	CreateOAuthState(ctx context.Context, st OAuthState) error
+	ConsumeOAuthState(ctx context.Context, state string) (OAuthState, error)
+}
+
+// ProviderInfo is what a client needs to render a sign-in button.
+type ProviderInfo struct {
+	Code        string
+	DisplayName string
+}
+
+// OAuthState is the short-lived, single-use record tying a redirect to the
+// callback that comes back.
+type OAuthState struct {
+	State        string
+	Nonce        string
+	CodeVerifier string
+	Provider     string
+	RedirectTo   *string
+	ExpiresAt    time.Time
 }
 
 // Mailer delivers the transactional emails this package sends.
@@ -68,6 +96,7 @@ type Service struct {
 	emailTTL         time.Duration
 	refreshTTLWeb    time.Duration
 	refreshTTLMobile time.Duration
+	providers        map[string]Provider
 	now              func() time.Time
 }
 
@@ -79,6 +108,16 @@ func WithClock(now func() time.Time) ServiceOption {
 	return func(s *Service) { s.now = now }
 }
 
+// WithProviders registers the identity providers this server can serve. One
+// that is absent answers 501 rather than failing in some subtler way.
+func WithProviders(providers ...Provider) ServiceOption {
+	return func(s *Service) {
+		for _, p := range providers {
+			s.providers[p.Code()] = p
+		}
+	}
+}
+
 // NewService wires the account use cases.
 func NewService(st store, issuer token.Issuer, mailer Mailer, cfg Config, opts ...ServiceOption) *Service {
 	s := &Service{
@@ -88,6 +127,7 @@ func NewService(st store, issuer token.Issuer, mailer Mailer, cfg Config, opts .
 		emailTTL:         cfg.EmailTokenTTL,
 		refreshTTLWeb:    cfg.RefreshTTLWeb,
 		refreshTTLMobile: cfg.RefreshTTLMobile,
+		providers:        map[string]Provider{},
 		now:              time.Now,
 	}
 	for _, opt := range opts {
@@ -113,3 +153,7 @@ func hashToken(plain string) []byte {
 	sum := sha256.Sum256([]byte(plain))
 	return sum[:]
 }
+
+// RegisterProvider adds a provider after construction, for wiring that has to
+// do network discovery before it can build one.
+func (s *Service) RegisterProvider(p Provider) { s.providers[p.Code()] = p }
