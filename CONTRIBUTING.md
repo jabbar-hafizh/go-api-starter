@@ -1,5 +1,9 @@
 # How we work here
 
+This file is the rules. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the
+reasons**, with the source for each one. If a rule below looks arbitrary, the
+argument for it is there. Disagree with the argument, not the rule.
+
 Rules come in two kinds: **machine-enforced** (CI fails) and **kept at review**.
 If a rule can move to the first group, move it.
 
@@ -23,7 +27,9 @@ skips them when Docker is not around.
 
 There is no line limit per file. What is limited is complexity per function
 (`funlen`, `gocognit`, `cyclop`), because that is where comprehension actually
-breaks and a machine can measure it.
+breaks and a machine can measure it. Google's Go style guide puts it directly:
+*"Go style is flexible about file size, because maintainers can move code
+within a package from one file to another without affecting callers."*
 
 ## Kept at review
 
@@ -93,6 +99,35 @@ not compile.
 
 `/v1` is additive only. The `code` value on an error is a public contract: once
 released, it never changes.
+
+### Tests
+
+Table-driven, and parallel by default. Two exceptions worth knowing:
+
+- Anything that touches global state, `slog.SetDefault` above all, must not be
+  parallel, and any buffer it writes into needs a mutex. Other parallel tests in
+  the package keep logging into it. This exact mistake failed the whole package
+  under `-race` once already.
+- Store tests are not parallel: each brings up its own Postgres.
+
+Use `t.Context()` rather than `context.Background()`.
+
+## Adding a provider
+
+The flow is provider agnostic, so adding Microsoft or Apple is:
+
+1. `internal/auth/provider_<name>.go` implementing `auth.Provider`
+2. One `INSERT` into `auth_providers`
+3. Configuration and wiring in `app.buildServer`
+
+No change to `oidc.go`, no change to the spec (the path is `{provider}`), no
+change to the linking rules. If a change is needed in any of those, the
+abstraction is wrong and that is worth saying in review.
+
+Note that the stable subject is not the same claim everywhere. Google's `sub`
+is stable; Microsoft Entra ID's `sub` is unique per user *and* application, so
+there it is `tid` + `oid`. Mapping it is the provider's job, which is the
+reason `Provider` is an interface rather than a shared claims struct.
 
 ## Commits
 

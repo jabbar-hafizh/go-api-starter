@@ -1,10 +1,13 @@
 package middleware_test
 
 import (
+	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -120,4 +123,50 @@ func TestRequestIDIsGeneratedAndEchoed(t *testing.T) {
 	require.NotEmpty(t, seen)
 	require.NotEqual(t, "attacker-supplied", seen)
 	require.Equal(t, seen, rec.Header().Get(middleware.RequestIDHeader))
+}
+
+// An orchestrator calls the probes every few seconds forever, so logging each
+// one buries everything else.
+//
+// Not parallel, and the buffer is guarded: replacing the default logger is
+// global, so every other test in this package writes into it too. An unguarded
+// bytes.Buffer here is a data race, and the race detector duly failed the whole
+// package when this test first went in.
+func TestRequestLogSkipsQuietPaths(t *testing.T) {
+	buf := &syncBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	handler := middleware.RequestLog("/healthz")(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	for _, path := range []string{"/healthz", "/v1/me"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, "the handler still runs for %s", path)
+	}
+
+	out := buf.String()
+	require.NotContains(t, out, "/healthz")
+	require.Contains(t, out, "/v1/me")
+	require.Contains(t, out, "status=200")
+}
+
+// syncBuffer is a bytes.Buffer that tolerates concurrent writers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

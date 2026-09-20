@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/jabbar-hafizh/go-api-starter/internal/apidocs"
 	"github.com/jabbar-hafizh/go-api-starter/internal/appversion"
 	"github.com/jabbar-hafizh/go-api-starter/internal/auth"
 	"github.com/jabbar-hafizh/go-api-starter/internal/calculator"
@@ -45,6 +46,10 @@ var publicPaths = map[string]struct{}{
 	"/v1/auth/logout":    {},
 	"/v1/auth/providers": {},
 	"/v1/app/config":     {},
+	// Served on purpose outside the contract: a document cannot describe
+	// how it is itself served.
+	apidocs.SpecPath: {},
+	apidocs.UIPath:   {},
 }
 
 // publicPatterns covers the routes that carry a path parameter. Written as the
@@ -204,16 +209,32 @@ func newHTTPServer(cfg config.Config, srv openapi.StrictServerInterface, verifie
 	mux := http.NewServeMux()
 	openapi.HandlerFromMux(handler, mux)
 
+	spec, err := openapi.GetSpec()
+	if err != nil {
+		// The document is embedded at build time, so failing to parse it means
+		// the binary itself is broken.
+		panic(err)
+	}
+	apidocs.Register(mux, spec)
+
 	// Order matters and reads outermost first: an id exists before anything is
 	// logged, a panic anywhere inside is caught, the body is capped before it
 	// is read, and authentication runs last so rate limiting protects it too.
 	middlewares := []func(http.Handler) http.Handler{
 		middleware.RequestID,
-		middleware.RequestLog,
+		// Probes are called every few seconds forever; logging them buries
+		// everything else.
+		middleware.RequestLog("/healthz", "/readyz"),
 		middleware.Recover,
 		middleware.SecurityHeaders,
 		middleware.CORS(cfg.HTTP.AllowedOrigins),
 		middleware.BodyLimit(cfg.HTTP.MaxBodyBytes),
+	}
+	if cfg.App.ValidateSpec {
+		// Placed after the body limit and before authentication, so it sees the
+		// request as the handler will.
+		middlewares = append(middlewares,
+			middleware.ValidateSpec(spec, apidocs.SpecPath, apidocs.UIPath))
 	}
 	if cfg.RateLimit.Enabled {
 		middlewares = append(middlewares,

@@ -6,16 +6,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # One source of configuration. Copy .env.example to .env first.
+    env_file:
+      - .env
     environment:
-      APP_ENV: local
-      APP_LOG_LEVEL: debug
-      HTTP_PORT: "8080"
-      # Inside the compose network Postgres answers to its service name.
-      # localhost here would be the api container itself.
+      # The only value that has to differ inside the network: Postgres answers
+      # to its service name here, and localhost would be this container.
       POSTGRES_DSN: postgres://app:app@postgres:5432/app?sslmode=disable
-      VALIDATE_SPEC: "true"
     ports:
       - "8080:8080"
+    healthcheck:
+      # The image has no shell, so the binary probes itself. Without this,
+      # `up --wait` calls a crash-looping container healthy.
+      test: ["CMD", "/api", "-health"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   postgres:
