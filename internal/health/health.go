@@ -6,10 +6,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/jabbar-hafizh/go-api-starter/internal/openapi"
 )
+
+// pinger is the only thing this package needs from a database pool, declared
+// here by the code that uses it.
+type pinger interface {
+	Ping(ctx context.Context) error
+}
 
 // A readiness probe that hangs is worse than one that says no, so each
 // dependency check is bounded.
@@ -17,12 +21,12 @@ const probeTimeout = 2 * time.Second
 
 // Handler serves the liveness and readiness endpoints.
 type Handler struct {
-	pool *pgxpool.Pool
+	postgres pinger
 }
 
 // NewHandler returns a handler that probes the given dependencies.
-func NewHandler(pool *pgxpool.Pool) *Handler {
-	return &Handler{pool: pool}
+func NewHandler(postgres pinger) *Handler {
+	return &Handler{postgres: postgres}
 }
 
 // GetHealthz touches no dependency on purpose. Liveness that fails when the
@@ -54,7 +58,7 @@ func (h *Handler) GetReadyz(ctx context.Context, _ openapi.GetReadyzRequestObjec
 
 func (h *Handler) checkPostgres(ctx context.Context) openapi.ReadinessCheck {
 	check := openapi.ReadinessCheck{Name: "postgres", Ok: true}
-	if err := h.pool.Ping(ctx); err != nil {
+	if err := h.postgres.Ping(ctx); err != nil {
 		// The driver message can carry host, port and database name.
 		msg := "unreachable"
 		check.Ok = false

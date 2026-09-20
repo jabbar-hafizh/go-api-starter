@@ -13,18 +13,40 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/jabbar-hafizh/go-api-starter/internal/auth"
 	"github.com/jabbar-hafizh/go-api-starter/internal/config"
 	"github.com/jabbar-hafizh/go-api-starter/internal/db"
 	"github.com/jabbar-hafizh/go-api-starter/internal/health"
 	"github.com/jabbar-hafizh/go-api-starter/internal/httperr"
+	"github.com/jabbar-hafizh/go-api-starter/internal/mailer"
+	"github.com/jabbar-hafizh/go-api-starter/internal/middleware"
 	"github.com/jabbar-hafizh/go-api-starter/internal/openapi"
+	"github.com/jabbar-hafizh/go-api-starter/internal/token"
 )
 
-// Server satisfies openapi.StrictServerInterface by embedding each feature's
-// handler. Method promotion gives it every operation without one struct
+// publicPaths need no access token. Everything else does: Authenticate fails
+// closed, so adding a route here is the only way to open it.
+var publicPaths = map[string]struct{}{
+	"/healthz":              {},
+	"/readyz":               {},
+	"/v1/auth/register":     {},
+	"/v1/auth/login":        {},
+	"/v1/auth/verify-email": {},
+}
+
+// Each feature names its handler Handler, which is right inside that package
+// but means two of them cannot be embedded side by side. Wrapping them here
+// gives distinct field names without bending the feature packages out of shape.
+type healthAPI struct{ *health.Handler }
+
+type authAPI struct{ *auth.Handler }
+
+// Server satisfies openapi.StrictServerInterface by embedding every feature's
+// handler. Method promotion gives it all the operations without one struct
 // knowing about everything.
 type Server struct {
-	*health.Handler
+	healthAPI
+	authAPI
 }
 
 var _ openapi.StrictServerInterface = (*Server)(nil)
@@ -56,10 +78,20 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	logger.Info("migrations applied")
 
+	signer := token.NewHS256([]byte(cfg.Auth.JWTSecret), cfg.Auth.JWTKeyID, cfg.Auth.AccessTokenTTL)
+
+	authSvc := auth.NewService(
+		auth.NewPostgresStore(pool),
+		signer,
+		mailer.NewLog(),
+		cfg.Auth.EmailTokenTTL,
+	)
+
 	srv := &Server{
-		Handler: health.NewHandler(pool),
+		healthAPI: healthAPI{health.NewHandler(pool)},
+		authAPI:   authAPI{auth.NewHandler(authSvc)},
 	}
-	httpSrv := newHTTPServer(cfg.HTTP, srv)
+	httpSrv := newHTTPServer(cfg.HTTP, srv, signer)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -88,7 +120,7 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	return nil
 }
 
-func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface) *http.Server {
+func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface, verifier token.Verifier) *http.Server {
 	handler := openapi.NewStrictHandlerWithOptions(srv, nil, openapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httperr.Request,
 		ResponseErrorHandlerFunc: httperr.Response,
@@ -99,7 +131,7 @@ func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface) *http.Ser
 
 	return &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           mux,
+		Handler:           middleware.Authenticate(verifier, publicPaths)(mux),
 		ReadTimeout:       cfg.ReadTimeout,
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

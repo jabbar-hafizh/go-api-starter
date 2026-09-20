@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for HealthStatusStatus.
@@ -53,6 +54,28 @@ func (e ReadinessStatusStatus) Valid() bool {
 	}
 }
 
+// Defines values for TokenPairTokenType.
+const (
+	Bearer TokenPairTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the TokenPairTokenType enum.
+func (e TokenPairTokenType) Valid() bool {
+	switch e {
+	case Bearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuthMethods What the client needs to decide between "Set password" and "Change
+// password", and when to disable unlinking.
+type AuthMethods struct {
+	Identities []Identity `json:"identities"`
+	Password   bool       `json:"password"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	// Code Stable code for clients to branch on. Never changes once released.
@@ -82,6 +105,32 @@ type HealthStatus struct {
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
 
+// Identity defines model for Identity.
+type Identity struct {
+	Email *string            `json:"email,omitempty"`
+	Id    openapi_types.UUID `json:"id"`
+
+	// Provider Example: google
+	Provider string `json:"provider"`
+}
+
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	// Email Example: someone@example.com
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// Me defines model for Me.
+type Me struct {
+	// AuthMethods What the client needs to decide between "Set password" and "Change
+	// password", and when to disable unlinking.
+	AuthMethods   AuthMethods         `json:"auth_methods"`
+	Email         openapi_types.Email `json:"email"`
+	EmailVerified bool                `json:"email_verified"`
+	Id            openapi_types.UUID  `json:"id"`
+}
+
 // ReadinessCheck defines model for ReadinessCheck.
 type ReadinessCheck struct {
 	// Error Set only when ok=false. Never carries internal detail.
@@ -101,6 +150,69 @@ type ReadinessStatus struct {
 // ReadinessStatusStatus defines model for ReadinessStatus.Status.
 type ReadinessStatusStatus string
 
+// RegisterRequest defines model for RegisterRequest.
+type RegisterRequest struct {
+	// Email Example: someone@example.com
+	Email string `json:"email"`
+
+	// Password Minimum 12 characters. Length is the only rule: composition rules
+	// push people towards predictable substitutions.
+	Password string `json:"password"`
+}
+
+// RegisteredUser defines model for RegisteredUser.
+type RegisteredUser struct {
+	Email         openapi_types.Email `json:"email"`
+	EmailVerified bool                `json:"email_verified"`
+	Id            openapi_types.UUID  `json:"id"`
+}
+
+// TokenPair defines model for TokenPair.
+type TokenPair struct {
+	AccessToken string `json:"access_token"`
+
+	// ExpiresIn Seconds until the access token expires.
+	//
+	// Example: 900
+	ExpiresIn int                `json:"expires_in"`
+	TokenType TokenPairTokenType `json:"token_type"`
+}
+
+// TokenPairTokenType defines model for TokenPair.TokenType.
+type TokenPairTokenType string
+
+// VerifyEmailRequest defines model for VerifyEmailRequest.
+type VerifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+// BadRequest defines model for BadRequest.
+type BadRequest = Error
+
+// Conflict defines model for Conflict.
+type Conflict = Error
+
+// Forbidden defines model for Forbidden.
+type Forbidden = Error
+
+// TooManyRequests defines model for TooManyRequests.
+type TooManyRequests = Error
+
+// Unauthorized defines model for Unauthorized.
+type Unauthorized = Error
+
+// ValidationFailed defines model for ValidationFailed.
+type ValidationFailed = Error
+
+// LoginUserJSONRequestBody defines body for LoginUser for application/json ContentType.
+type LoginUserJSONRequestBody = LoginRequest
+
+// RegisterUserJSONRequestBody defines body for RegisterUser for application/json ContentType.
+type RegisterUserJSONRequestBody = RegisterRequest
+
+// VerifyEmailJSONRequestBody defines body for VerifyEmail for application/json ContentType.
+type VerifyEmailJSONRequestBody = VerifyEmailRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealthz Liveness probe
@@ -109,6 +221,18 @@ type ServerInterface interface {
 	// GetReadyz Readiness probe
 	// (GET /readyz)
 	GetReadyz(w http.ResponseWriter, r *http.Request)
+	// LoginUser Exchange email and password for an access token
+	// (POST /v1/auth/login)
+	LoginUser(w http.ResponseWriter, r *http.Request)
+	// RegisterUser Create an account with an email and password
+	// (POST /v1/auth/register)
+	RegisterUser(w http.ResponseWriter, r *http.Request)
+	// VerifyEmail Confirm an email address with a token
+	// (POST /v1/auth/verify-email)
+	VerifyEmail(w http.ResponseWriter, r *http.Request)
+	// GetMe The authenticated user and its active login methods
+	// (GET /v1/me)
+	GetMe(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -139,6 +263,62 @@ func (siw *ServerInterfaceWrapper) GetReadyz(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadyz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LoginUser operation middleware
+func (siw *ServerInterfaceWrapper) LoginUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LoginUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterUser operation middleware
+func (siw *ServerInterfaceWrapper) RegisterUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VerifyEmail operation middleware
+func (siw *ServerInterfaceWrapper) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyEmail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -268,11 +448,27 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/register", wrapper.RegisterUser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.LoginUser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/verify-email", wrapper.VerifyEmail)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadyz)
 
 	return m
 }
+
+type BadRequestJSONResponse Error
+
+type ConflictJSONResponse Error
+
+type ForbiddenJSONResponse Error
+
+type TooManyRequestsJSONResponse Error
+
+type UnauthorizedJSONResponse Error
+
+type ValidationFailedJSONResponse Error
 
 type GetHealthzRequestObject struct {
 }
@@ -330,6 +526,227 @@ func (response GetReadyz503JSONResponse) VisitGetReadyzResponse(w http.ResponseW
 	return err
 }
 
+type LoginUserRequestObject struct {
+	Body *LoginUserJSONRequestBody
+}
+
+type LoginUserResponseObject interface {
+	VisitLoginUserResponse(w http.ResponseWriter) error
+}
+
+type LoginUser200JSONResponse TokenPair
+
+func (response LoginUser200JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginUser400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response LoginUser400JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginUser401JSONResponse Error
+
+func (response LoginUser401JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginUser403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response LoginUser403JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginUser429JSONResponse struct{ TooManyRequestsJSONResponse }
+
+func (response LoginUser429JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterUserRequestObject struct {
+	Body *RegisterUserJSONRequestBody
+}
+
+type RegisterUserResponseObject interface {
+	VisitRegisterUserResponse(w http.ResponseWriter) error
+}
+
+type RegisterUser201JSONResponse RegisteredUser
+
+func (response RegisterUser201JSONResponse) VisitRegisterUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterUser400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RegisterUser400JSONResponse) VisitRegisterUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterUser409JSONResponse struct{ ConflictJSONResponse }
+
+func (response RegisterUser409JSONResponse) VisitRegisterUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterUser422JSONResponse struct{ ValidationFailedJSONResponse }
+
+func (response RegisterUser422JSONResponse) VisitRegisterUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyEmailRequestObject struct {
+	Body *VerifyEmailJSONRequestBody
+}
+
+type VerifyEmailResponseObject interface {
+	VisitVerifyEmailResponse(w http.ResponseWriter) error
+}
+
+type VerifyEmail204Response struct {
+}
+
+func (response VerifyEmail204Response) VisitVerifyEmailResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type VerifyEmail400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response VerifyEmail400JSONResponse) VisitVerifyEmailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VerifyEmail410JSONResponse Error
+
+func (response VerifyEmail410JSONResponse) VisitVerifyEmailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMeRequestObject struct {
+}
+
+type GetMeResponseObject interface {
+	VisitGetMeResponse(w http.ResponseWriter) error
+}
+
+type GetMe200JSONResponse Me
+
+func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMe401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetHealthz Liveness probe
@@ -338,6 +755,18 @@ type StrictServerInterface interface {
 	// GetReadyz Readiness probe
 	// (GET /readyz)
 	GetReadyz(ctx context.Context, request GetReadyzRequestObject) (GetReadyzResponseObject, error)
+	// LoginUser Exchange email and password for an access token
+	// (POST /v1/auth/login)
+	LoginUser(ctx context.Context, request LoginUserRequestObject) (LoginUserResponseObject, error)
+	// RegisterUser Create an account with an email and password
+	// (POST /v1/auth/register)
+	RegisterUser(ctx context.Context, request RegisterUserRequestObject) (RegisterUserResponseObject, error)
+	// VerifyEmail Confirm an email address with a token
+	// (POST /v1/auth/verify-email)
+	VerifyEmail(ctx context.Context, request VerifyEmailRequestObject) (VerifyEmailResponseObject, error)
+	// GetMe The authenticated user and its active login methods
+	// (GET /v1/me)
+	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -427,28 +856,165 @@ func (sh *strictHandler) GetReadyz(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// LoginUser operation middleware
+func (sh *strictHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
+	var request LoginUserRequestObject
+
+	var body LoginUserJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LoginUser(ctx, request.(LoginUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LoginUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginUserResponseObject); ok {
+		if err := validResponse.VisitLoginUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegisterUser operation middleware
+func (sh *strictHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
+	var request RegisterUserRequestObject
+
+	var body RegisterUserJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegisterUser(ctx, request.(RegisterUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegisterUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterUserResponseObject); ok {
+		if err := validResponse.VisitRegisterUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// VerifyEmail operation middleware
+func (sh *strictHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var request VerifyEmailRequestObject
+
+	var body VerifyEmailJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.VerifyEmail(ctx, request.(VerifyEmailRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "VerifyEmail")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(VerifyEmailResponseObject); ok {
+		if err := validResponse.VisitVerifyEmailResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMe operation middleware
+func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	var request GetMeRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMe(ctx, request.(GetMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMeResponseObject); ok {
+		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"K6ofwt2xAqPNzea/AwA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

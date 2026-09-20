@@ -21,8 +21,110 @@ servers:
 tags:
   - name: health
     description: Liveness and readiness
+  - name: auth
+    description: Registration, login and email verification
+  - name: me
+    description: The authenticated user
+
+security:
+  - bearerAuth: []
 
 paths:
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: registerUser
+      summary: Create an account with an email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: |
+            Account created. No session is issued: the email must be verified
+            first, because auto-linking an SSO identity later is only safe when
+            the local email was proven.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisteredUser"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: loginUser
+      summary: Exchange email and password for an access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: |
+            Wrong credentials. The body is identical whether the email exists or
+            the password is wrong, otherwise this endpoint becomes a user
+            enumeration oracle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/auth/verify-email:
+    post:
+      tags: [auth]
+      operationId: verifyEmail
+      summary: Confirm an email address with a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyEmailRequest"
+      responses:
+        "204":
+          description: Email verified
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410":
+          description: Token expired or already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me:
+    get:
+      tags: [me]
+      operationId: getMe
+      summary: The authenticated user and its active login methods
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /healthz:
     get:
       tags: [health]
@@ -58,7 +160,160 @@ paths:
                 $ref: "#/components/schemas/ReadinessStatus"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but not allowed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Conflicts with existing state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: Well-formed but failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate limited
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
   schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          # Deliberately not format: email. A bad address would then be
+          # rejected while decoding, so the client would get a 400 with no
+          # field detail for email and a 422 with detail for password. One
+          # shape for every validation failure is worth more than the
+          # generated type.
+          type: string
+          maxLength: 254
+          example: someone@example.com
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 256
+          description: |
+            Minimum 12 characters. Length is the only rule: composition rules
+            push people towards predictable substitutions.
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          example: someone@example.com
+        password:
+          type: string
+          format: password
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    RegisteredUser:
+      type: object
+      required: [id, email, email_verified]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+
+    TokenPair:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until the access token expires.
+          example: 900
+
+    Me:
+      type: object
+      required: [id, email, email_verified, auth_methods]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        auth_methods:
+          $ref: "#/components/schemas/AuthMethods"
+
+    AuthMethods:
+      type: object
+      required: [password, identities]
+      description: |
+        What the client needs to decide between "Set password" and "Change
+        password", and when to disable unlinking.
+      properties:
+        password:
+          type: boolean
+        identities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Identity"
+
+    Identity:
+      type: object
+      required: [id, provider]
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          example: google
+        email:
+          type: string
+
     HealthStatus:
       type: object
       required: [status]

@@ -28,9 +28,17 @@ type StatusError interface {
 	Code() string
 }
 
+// Detail is one field-level problem. It is declared here rather than reused
+// from the generated types so feature packages can report validation errors
+// without importing generated code.
+type Detail struct {
+	Field   string
+	Message string
+}
+
 // DetailProvider is optional, for validation errors that point at a field.
 type DetailProvider interface {
-	Details() []openapi.ErrorDetail
+	Details() []Detail
 }
 
 // Response is wired in as the strict server's ResponseErrorHandlerFunc, so
@@ -42,7 +50,10 @@ func Response(w http.ResponseWriter, r *http.Request, err error) {
 
 		var dp DetailProvider
 		if errors.As(err, &dp) {
-			details := dp.Details()
+			details := make([]openapi.ErrorDetail, 0, len(dp.Details()))
+			for _, d := range dp.Details() {
+				details = append(details, openapi.ErrorDetail{Field: d.Field, Message: d.Message})
+			}
 			body.Details = &details
 		}
 		write(w, r, se.HTTPStatus(), body)

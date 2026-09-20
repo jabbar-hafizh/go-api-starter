@@ -25,6 +25,7 @@ type Config struct {
 	App      App
 	HTTP     HTTP
 	Postgres Postgres
+	Auth     Auth
 }
 
 // App holds settings not tied to a single dependency.
@@ -54,6 +55,22 @@ type Postgres struct {
 	MinConns int32
 }
 
+// Auth holds token signing and lifetime settings.
+type Auth struct {
+	JWTSecret string
+	// JWTKeyID goes in the token header from the very first token. It costs
+	// nothing now and is what makes moving to RS256 later a 15 minute
+	// dual-verification window instead of a forced logout.
+	JWTKeyID       string
+	AccessTokenTTL time.Duration
+	// EmailTokenTTL covers verification and password reset links.
+	EmailTokenTTL time.Duration
+}
+
+// minJWTSecretLen matches the HMAC-SHA256 block size. A shorter secret is
+// padded internally, so it buys less entropy than its length suggests.
+const minJWTSecretLen = 32
+
 // Load takes getenv as an argument so tests never touch the process environment.
 func Load(getenv func(string) string) (Config, error) {
 	var p parser
@@ -76,6 +93,12 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxConns: p.int32(getenv, "POSTGRES_MAX_CONNS", 10),
 			MinConns: p.int32(getenv, "POSTGRES_MIN_CONNS", 2),
 		},
+		Auth: Auth{
+			JWTSecret:      p.required(getenv, "JWT_SECRET"),
+			JWTKeyID:       p.str(getenv, "JWT_KEY_ID", "k1"),
+			AccessTokenTTL: p.duration(getenv, "ACCESS_TOKEN_TTL", 15*time.Minute),
+			EmailTokenTTL:  p.duration(getenv, "EMAIL_TOKEN_TTL", 24*time.Hour),
+		},
 	}
 
 	cfg.validate(&p)
@@ -95,6 +118,11 @@ func (c Config) validate(p *parser) {
 
 	if c.App.ValidateSpec && c.App.Env == EnvProduction {
 		p.add(errors.New("VALIDATE_SPEC must be off in production"))
+	}
+
+	if c.Auth.JWTSecret != "" && len(c.Auth.JWTSecret) < minJWTSecretLen {
+		p.add(fmt.Errorf("JWT_SECRET: %d characters, need at least %d",
+			len(c.Auth.JWTSecret), minJWTSecretLen))
 	}
 
 	if c.Postgres.MinConns > c.Postgres.MaxConns {

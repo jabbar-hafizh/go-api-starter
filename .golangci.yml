@@ -48,6 +48,12 @@ linters:
           - cyclop
           - gocognit
           - gosec
+      # A doc comment on every exported symbol is right for a library. This is
+      # an application, and on methods that just satisfy an interface the
+      # comment only repeats the interface. Comments stay where they earn it.
+      - linters:
+          - revive
+        text: "^exported:"
 
 formatters:
   enable:

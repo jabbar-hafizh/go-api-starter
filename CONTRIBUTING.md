@@ -10,11 +10,16 @@ If a rule can move to the first group, move it.
 | Compiles | `go build ./...` |
 | Generated code in sync | `go tool sqlc diff`, regenerate OpenAPI then `git diff --exit-code` |
 | Linter | `golangci-lint run` |
-| Tests | `go test -race ./...` |
+| Tests | `go test -race ./...` (needs Docker) |
 | Spec is valid | `redocly lint docs/openapi.yaml` |
 | Spec is not breaking | `oasdiff breaking` against `main` |
 
 Run all of it locally with `make verify`.
+
+Store tests run against a real Postgres through testcontainers, because mocking
+SQL only tests the mock: a typo in a column name, a constraint that never fires
+and a CTE that is not actually atomic all survive a fake store. `make test-short`
+skips them when Docker is not around.
 
 There is no line limit per file. What is limited is complexity per function
 (`funlen`, `gocognit`, `cyclop`), because that is where comprehension actually

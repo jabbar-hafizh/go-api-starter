@@ -30,8 +30,12 @@ run: ## Run the server with .env
 	set -a && source .env && set +a && go run ./cmd/api
 
 .PHONY: test
-test: ## Run all tests
+test: ## Run all tests, including the ones against a real Postgres
 	go test -race -count=1 ./...
+
+.PHONY: test-short
+test-short: ## Run only the tests that need no Docker
+	go test -race -count=1 -short ./...
 
 .PHONY: cover
 cover: ## Tests with coverage, excluding generated code

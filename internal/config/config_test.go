@@ -19,6 +19,7 @@ func env(kv map[string]string) func(string) string {
 func minimalEnv() map[string]string {
 	return map[string]string{
 		"POSTGRES_DSN": "postgres://app:app@localhost:5432/app?sslmode=disable",
+		"JWT_SECRET":   strings.Repeat("s", 32),
 	}
 }
 
@@ -35,6 +36,9 @@ func TestLoad_DefaultsWhenEnvEmpty(t *testing.T) {
 	require.Equal(t, 10*time.Second, cfg.HTTP.ReadTimeout)
 	require.Equal(t, int32(10), cfg.Postgres.MaxConns)
 	require.Equal(t, int32(2), cfg.Postgres.MinConns)
+	require.Equal(t, "k1", cfg.Auth.JWTKeyID)
+	require.Equal(t, 15*time.Minute, cfg.Auth.AccessTokenTTL)
+	require.Equal(t, 24*time.Hour, cfg.Auth.EmailTokenTTL)
 }
 
 func TestLoad_EnvOverridesDefaults(t *testing.T) {
@@ -90,6 +94,16 @@ func TestLoad_Invalid(t *testing.T) {
 			wantMsg: "POSTGRES_MAX_CONNS",
 		},
 		{
+			name:    "JWT_SECRET is required",
+			mutate:  func(kv map[string]string) { delete(kv, "JWT_SECRET") },
+			wantMsg: "JWT_SECRET: required",
+		},
+		{
+			name:    "JWT_SECRET too short",
+			mutate:  func(kv map[string]string) { kv["JWT_SECRET"] = "short" },
+			wantMsg: "JWT_SECRET: 5 characters",
+		},
+		{
 			name:    "min exceeds max",
 			mutate:  func(kv map[string]string) { kv["POSTGRES_MIN_CONNS"] = "50" },
 			wantMsg: "exceeds",
@@ -124,8 +138,8 @@ func TestLoad_ReportsEveryProblemAtOnce(t *testing.T) {
 
 	kv := map[string]string{
 		"APP_ENV":            "uat",
-		"HTTP_READ_TIMEOUT":  "sebentar",
-		"POSTGRES_MAX_CONNS": "banyak",
+		"HTTP_READ_TIMEOUT":  "not-a-duration",
+		"POSTGRES_MAX_CONNS": "lots",
 	}
 
 	_, err := config.Load(env(kv))
@@ -133,8 +147,9 @@ func TestLoad_ReportsEveryProblemAtOnce(t *testing.T) {
 
 	msg := err.Error()
 	require.Contains(t, msg, "POSTGRES_DSN")
+	require.Contains(t, msg, "JWT_SECRET")
 	require.Contains(t, msg, "APP_ENV")
 	require.Contains(t, msg, "HTTP_READ_TIMEOUT")
 	require.Contains(t, msg, "POSTGRES_MAX_CONNS")
-	require.Equal(t, 4, strings.Count(msg, "\n  - "), "should report 4 problems")
+	require.Equal(t, 5, strings.Count(msg, "\n  - "), "should report 5 problems")
 }
