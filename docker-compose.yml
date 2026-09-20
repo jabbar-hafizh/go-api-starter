@@ -1,4 +1,23 @@
 services:
+  api:
+    build:
+      context: .
+    container_name: go-api-starter-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: local
+      APP_LOG_LEVEL: debug
+      HTTP_PORT: "8080"
+      # Inside the compose network Postgres answers to its service name.
+      # localhost here would be the api container itself.
+      POSTGRES_DSN: postgres://app:app@postgres:5432/app?sslmode=disable
+      VALIDATE_SPEC: "true"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: go-api-starter-postgres

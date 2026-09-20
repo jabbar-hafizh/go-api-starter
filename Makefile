@@ -56,6 +56,22 @@ verify: ## The same gates CI runs
 	golangci-lint run
 	go test -race -count=1 ./...
 
+.PHONY: docker-build
+docker-build: ## Build the app image
+	docker compose build api
+
+.PHONY: up
+up: ## Run app and Postgres in Docker
+	docker compose up -d --build --wait
+
+.PHONY: down
+down: ## Stop everything, keep the data
+	docker compose down
+
+.PHONY: logs
+logs: ## Follow the app logs
+	docker compose logs -f api
+
 .PHONY: db-up
 db-up: ## Start Postgres and wait until healthy
 	docker compose up -d --wait postgres

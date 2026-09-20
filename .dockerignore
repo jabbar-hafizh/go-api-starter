@@ -1,0 +1,13 @@
+# Never ship secrets in an image layer.
+.env
+.env.local
+
+.git
+.github
+bin/
+tmp/
+coverage.out
+coverage.html
+*.md
+.DS_Store
+.idea/
