@@ -22,11 +22,32 @@ const (
 
 // Config is the whole service configuration.
 type Config struct {
-	App      App
-	HTTP     HTTP
-	Postgres Postgres
-	Auth     Auth
-	Google   Google
+	App       App
+	HTTP      HTTP
+	Postgres  Postgres
+	Auth      Auth
+	Google    Google
+	RateLimit RateLimit
+	Client    Client
+}
+
+// RateLimit bounds how often a caller may act. In-process today, so limits are
+// per replica: two replicas means twice the real ceiling.
+type RateLimit struct {
+	Enabled     bool
+	IPPerSecond float64
+	IPBurst     int
+	// Login limits are per email address rather than per address, so rotating
+	// IPs does not buy an attacker more guesses at one account.
+	LoginPerMinute float64
+	LoginBurst     int
+}
+
+// Client is what the app is told about itself.
+type Client struct {
+	MinVersionIOS     string
+	MinVersionAndroid string
+	UpgradeMessage    string
 }
 
 // App holds settings not tied to a single dependency.
@@ -50,6 +71,16 @@ type HTTP struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	// MaxBodyBytes caps a single request, so one caller cannot make the
+	// server read an unbounded amount into memory.
+	MaxBodyBytes int64
+	// AllowedOrigins is an exact allowlist. Reflecting whatever Origin arrives
+	// would let any site make authenticated calls for a signed-in user.
+	AllowedOrigins []string
+	// TrustedProxyHops is how many proxies sit in front. Zero means
+	// X-Forwarded-For is ignored, because trusting it unguarded lets anyone
+	// rotate their apparent address past the rate limits.
+	TrustedProxyHops int
 }
 
 // Postgres holds the database connection settings.
@@ -107,11 +138,14 @@ func Load(getenv func(string) string) (Config, error) {
 			ValidateSpec: p.boolean(getenv, "VALIDATE_SPEC", false),
 		},
 		HTTP: HTTP{
-			Port:            p.str(getenv, "HTTP_PORT", "8080"),
-			ReadTimeout:     p.duration(getenv, "HTTP_READ_TIMEOUT", 10*time.Second),
-			WriteTimeout:    p.duration(getenv, "HTTP_WRITE_TIMEOUT", 15*time.Second),
-			IdleTimeout:     p.duration(getenv, "HTTP_IDLE_TIMEOUT", 60*time.Second),
-			ShutdownTimeout: p.duration(getenv, "HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
+			Port:             p.str(getenv, "HTTP_PORT", "8080"),
+			ReadTimeout:      p.duration(getenv, "HTTP_READ_TIMEOUT", 10*time.Second),
+			WriteTimeout:     p.duration(getenv, "HTTP_WRITE_TIMEOUT", 15*time.Second),
+			IdleTimeout:      p.duration(getenv, "HTTP_IDLE_TIMEOUT", 60*time.Second),
+			ShutdownTimeout:  p.duration(getenv, "HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
+			MaxBodyBytes:     int64(p.int32(getenv, "HTTP_MAX_BODY_BYTES", 1<<20)),
+			AllowedOrigins:   p.list(getenv, "HTTP_ALLOWED_ORIGINS"),
+			TrustedProxyHops: int(p.int32NonNegative(getenv, "HTTP_TRUSTED_PROXY_HOPS", 0)),
 		},
 		Postgres: Postgres{
 			DSN:      p.required(getenv, "POSTGRES_DSN"),
@@ -126,6 +160,18 @@ func Load(getenv func(string) string) (Config, error) {
 
 			RefreshTokenTTLWeb:    p.duration(getenv, "REFRESH_TOKEN_TTL_WEB", 7*24*time.Hour),
 			RefreshTokenTTLMobile: p.duration(getenv, "REFRESH_TOKEN_TTL_MOBILE", 30*24*time.Hour),
+		},
+		RateLimit: RateLimit{
+			Enabled:        p.boolean(getenv, "RATE_LIMIT_ENABLED", true),
+			IPPerSecond:    p.float(getenv, "RATE_LIMIT_IP_PER_SECOND", 20),
+			IPBurst:        int(p.int32(getenv, "RATE_LIMIT_IP_BURST", 40)),
+			LoginPerMinute: p.float(getenv, "RATE_LIMIT_LOGIN_PER_MINUTE", 5),
+			LoginBurst:     int(p.int32(getenv, "RATE_LIMIT_LOGIN_BURST", 5)),
+		},
+		Client: Client{
+			MinVersionIOS:     p.str(getenv, "MIN_CLIENT_VERSION_IOS", ""),
+			MinVersionAndroid: p.str(getenv, "MIN_CLIENT_VERSION_ANDROID", ""),
+			UpgradeMessage:    p.str(getenv, "CLIENT_UPGRADE_MESSAGE", "Please update the app to continue."),
 		},
 		Google: Google{
 			ClientID:         p.str(getenv, "GOOGLE_CLIENT_ID", ""),
@@ -245,6 +291,33 @@ func (p *parser) list(getenv func(string) string, key string) []string {
 		}
 	}
 	return out
+}
+
+// int32NonNegative allows zero, which int32 rejects.
+func (p *parser) int32NonNegative(getenv func(string) string, key string, def int32) int32 {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || v < 0 {
+		p.add(fmt.Errorf("%s: %q must be a non-negative 32-bit integer", key, raw))
+		return def
+	}
+	return int32(v)
+}
+
+func (p *parser) float(getenv func(string) string, key string, def float64) float64 {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v <= 0 {
+		p.add(fmt.Errorf("%s: %q must be a number greater than zero", key, raw))
+		return def
+	}
+	return v
 }
 
 func (p *parser) boolean(getenv func(string) string, key string, def bool) bool {

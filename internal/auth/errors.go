@@ -82,6 +82,12 @@ var (
 		http.StatusBadRequest, "ERR_AUTH_OAUTH_STATE_INVALID",
 		"the sign-in attempt expired or was already used",
 	}
+	// ErrTooManyAttempts is keyed per email rather than per address, so
+	// rotating IPs does not buy more guesses at one account.
+	ErrTooManyAttempts = &Error{
+		http.StatusTooManyRequests, "ERR_AUTH_TOO_MANY_ATTEMPTS",
+		"too many sign-in attempts, try again later",
+	}
 	ErrRefreshInvalid = &Error{
 		http.StatusUnauthorized, "ERR_AUTH_REFRESH_INVALID", "refresh token is not usable",
 	}

@@ -27,6 +27,8 @@ tags:
     description: The authenticated user
   - name: calculator
     description: Arithmetic
+  - name: app
+    description: What the client needs to know about itself
 
 security:
   - bearerAuth: []
@@ -395,6 +397,28 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /v1/app/config:
+    get:
+      tags: [app]
+      operationId: getAppConfig
+      summary: Whether this client build may still run
+      description: |
+        Mobile builds live on devices for months and cannot be forced to
+        update, so the server has to be able to tell one it has fallen too far
+        behind. An unknown platform or an unreadable version is never forced to
+        upgrade.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ClientPlatform"
+        - $ref: "#/components/parameters/ClientVersion"
+      responses:
+        "200":
+          description: Client configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppConfig"
+
   /healthz:
     get:
       tags: [health]
@@ -449,6 +473,17 @@ components:
       schema:
         type: string
         example: google
+
+    ClientVersion:
+      name: X-Client-Version
+      in: header
+      required: false
+      description: |
+        The client build, as dotted numbers such as 1.4.2. Recorded on every
+        request: without it there is no way to know when an old build has
+        stopped calling an endpoint you want to remove.
+      schema:
+        type: string
 
     ClientPlatform:
       name: X-Client-Platform
@@ -658,6 +693,18 @@ components:
         wrong by that point. The length cap keeps a single request from asking
         for arbitrarily large arithmetic.
       example: "10.5"
+
+    AppConfig:
+      type: object
+      required: [force_upgrade]
+      properties:
+        min_supported_version:
+          type: string
+          description: Empty when this platform has no minimum.
+        force_upgrade:
+          type: boolean
+        upgrade_message:
+          type: string
 
     ProviderInfo:
       type: object

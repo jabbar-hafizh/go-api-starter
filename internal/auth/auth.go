@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jabbar-hafizh/go-api-starter/internal/ratelimit"
 	"github.com/jabbar-hafizh/go-api-starter/internal/token"
 )
 
@@ -97,6 +98,7 @@ type Service struct {
 	refreshTTLWeb    time.Duration
 	refreshTTLMobile time.Duration
 	providers        map[string]Provider
+	loginLimiter     ratelimit.Limiter
 	now              func() time.Time
 }
 
@@ -106,6 +108,11 @@ type ServiceOption func(*Service)
 // WithClock replaces the time source, for tests.
 func WithClock(now func() time.Time) ServiceOption {
 	return func(s *Service) { s.now = now }
+}
+
+// WithLoginLimiter bounds sign-in attempts per email address.
+func WithLoginLimiter(l ratelimit.Limiter) ServiceOption {
+	return func(s *Service) { s.loginLimiter = l }
 }
 
 // WithProviders registers the identity providers this server can serve. One
@@ -128,6 +135,7 @@ func NewService(st store, issuer token.Issuer, mailer Mailer, cfg Config, opts .
 		refreshTTLWeb:    cfg.RefreshTTLWeb,
 		refreshTTLMobile: cfg.RefreshTTLMobile,
 		providers:        map[string]Provider{},
+		loginLimiter:     ratelimit.Allowed{},
 		now:              time.Now,
 	}
 	for _, opt := range opts {

@@ -4,11 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // Login exchanges an email and password for a session.
 func (s *Service) Login(ctx context.Context, email, password string, p Platform) (Session, error) {
-	user, err := s.store.UserByEmail(ctx, normalizeEmail(email))
+	normalized := normalizeEmail(email)
+
+	// Checked before anything expensive happens, so a flood of guesses costs
+	// the server a map lookup rather than an argon2 hash each.
+	allowed, err := s.loginLimiter.Allow(ctx, "login:"+normalized)
+	if err != nil {
+		slog.ErrorContext(ctx, "login limiter failed, allowing attempt", slog.Any("err", err))
+	} else if !allowed {
+		return Session{}, ErrTooManyAttempts
+	}
+
+	user, err := s.store.UserByEmail(ctx, normalized)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// Hash anyway. Skipping this makes an unknown email answer in

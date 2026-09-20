@@ -12,9 +12,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/jabbar-hafizh/go-api-starter/internal/appversion"
 	"github.com/jabbar-hafizh/go-api-starter/internal/auth"
 	"github.com/jabbar-hafizh/go-api-starter/internal/calculator"
 	"github.com/jabbar-hafizh/go-api-starter/internal/config"
@@ -24,6 +26,7 @@ import (
 	"github.com/jabbar-hafizh/go-api-starter/internal/mailer"
 	"github.com/jabbar-hafizh/go-api-starter/internal/middleware"
 	"github.com/jabbar-hafizh/go-api-starter/internal/openapi"
+	"github.com/jabbar-hafizh/go-api-starter/internal/ratelimit"
 	"github.com/jabbar-hafizh/go-api-starter/internal/token"
 )
 
@@ -41,6 +44,7 @@ var publicPaths = map[string]struct{}{
 	"/v1/auth/refresh":   {},
 	"/v1/auth/logout":    {},
 	"/v1/auth/providers": {},
+	"/v1/app/config":     {},
 }
 
 // publicPatterns covers the routes that carry a path parameter. Written as the
@@ -61,6 +65,8 @@ type authAPI struct{ *auth.Handler }
 
 type calculatorAPI struct{ *calculator.Handler }
 
+type appVersionAPI struct{ *appversion.Handler }
+
 // Server satisfies openapi.StrictServerInterface by embedding every feature's
 // handler. Method promotion gives it all the operations without one struct
 // knowing about everything.
@@ -68,6 +74,7 @@ type Server struct {
 	healthAPI
 	authAPI
 	calculatorAPI
+	appVersionAPI
 }
 
 var _ openapi.StrictServerInterface = (*Server)(nil)
@@ -103,7 +110,7 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	httpSrv := newHTTPServer(cfg.HTTP, srv, signer)
+	httpSrv := newHTTPServer(cfg, srv, signer)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -146,6 +153,7 @@ func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log
 			RefreshTTLWeb:    cfg.Auth.RefreshTokenTTLWeb,
 			RefreshTTLMobile: cfg.Auth.RefreshTokenTTLMobile,
 		},
+		auth.WithLoginLimiter(loginLimiter(cfg.RateLimit)),
 	)
 
 	if cfg.Google.Configured() {
@@ -167,14 +175,27 @@ func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log
 	// silently never receive one.
 	secureCookies := cfg.App.Env != config.EnvLocal
 
+	gate := appversion.NewGate(
+		cfg.Client.MinVersionIOS, cfg.Client.MinVersionAndroid, cfg.Client.UpgradeMessage)
+
 	return &Server{
 		healthAPI:     healthAPI{health.NewHandler(pool)},
 		authAPI:       authAPI{auth.NewHandler(authSvc, cfg.App.BaseURL, secureCookies)},
 		calculatorAPI: calculatorAPI{calculator.NewHandler()},
+		appVersionAPI: appVersionAPI{appversion.NewHandler(gate)},
 	}, signer, nil
 }
 
-func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface, verifier token.Verifier) *http.Server {
+// loginLimiter bounds sign-in attempts per email. Disabled means no ceiling at
+// all, which is only ever right for tests and local work.
+func loginLimiter(cfg config.RateLimit) ratelimit.Limiter {
+	if !cfg.Enabled {
+		return ratelimit.Allowed{}
+	}
+	return ratelimit.NewMemory(cfg.LoginPerMinute/60, cfg.LoginBurst, time.Hour)
+}
+
+func newHTTPServer(cfg config.Config, srv openapi.StrictServerInterface, verifier token.Verifier) *http.Server {
 	handler := openapi.NewStrictHandlerWithOptions(srv, nil, openapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  httperr.Request,
 		ResponseErrorHandlerFunc: httperr.Response,
@@ -183,13 +204,32 @@ func newHTTPServer(cfg config.HTTP, srv openapi.StrictServerInterface, verifier 
 	mux := http.NewServeMux()
 	openapi.HandlerFromMux(handler, mux)
 
+	// Order matters and reads outermost first: an id exists before anything is
+	// logged, a panic anywhere inside is caught, the body is capped before it
+	// is read, and authentication runs last so rate limiting protects it too.
+	middlewares := []func(http.Handler) http.Handler{
+		middleware.RequestID,
+		middleware.RequestLog,
+		middleware.Recover,
+		middleware.SecurityHeaders,
+		middleware.CORS(cfg.HTTP.AllowedOrigins),
+		middleware.BodyLimit(cfg.HTTP.MaxBodyBytes),
+	}
+	if cfg.RateLimit.Enabled {
+		middlewares = append(middlewares,
+			middleware.RateLimit(
+				ratelimit.NewMemory(cfg.RateLimit.IPPerSecond, cfg.RateLimit.IPBurst, time.Hour),
+				cfg.HTTP.TrustedProxyHops))
+	}
+	middlewares = append(middlewares, middleware.Authenticate(verifier, publicPaths, publicPatterns))
+
 	return &http.Server{
-		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           middleware.Authenticate(verifier, publicPaths, publicPatterns)(mux),
-		ReadTimeout:       cfg.ReadTimeout,
-		ReadHeaderTimeout: cfg.ReadTimeout,
-		WriteTimeout:      cfg.WriteTimeout,
-		IdleTimeout:       cfg.IdleTimeout,
+		Addr:              net.JoinHostPort("", cfg.HTTP.Port),
+		Handler:           middleware.Chain(mux, middlewares...),
+		ReadTimeout:       cfg.HTTP.ReadTimeout,
+		ReadHeaderTimeout: cfg.HTTP.ReadTimeout,
+		WriteTimeout:      cfg.HTTP.WriteTimeout,
+		IdleTimeout:       cfg.HTTP.IdleTimeout,
 	}
 }
 

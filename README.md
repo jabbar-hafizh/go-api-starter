@@ -37,9 +37,20 @@ internal/
   config           read env, validate, fail fast
   db               connection, migrations, SQL queries, generated code
   openapi          generated from docs/openapi.yaml
+  auth             accounts, passwords, sessions, providers
+  calculator       arithmetic
+  appversion       whether a client build may still run
+  token            issue and verify access tokens
+  ratelimit        how often a caller may act
+  middleware       request id, logging, recover, CORS, limits, authentication
+  mailer           transactional email
   health           liveness and readiness
   httperr          the only place errors become HTTP responses
 ```
+
+Rate limits are in-process, so they are enforced per replica: two replicas
+means twice the real ceiling. That is the point to put a shared store behind
+`ratelimit.Limiter`.
 
 ## Tooling
 
