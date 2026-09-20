@@ -29,7 +29,25 @@ type Config struct {
 	Google    Google
 	RateLimit RateLimit
 	Client    Client
+	SMTP      SMTP
 }
+
+// SMTP sends the transactional email. Leaving Host empty is allowed: the
+// mailer then writes to the log instead, which is what local development uses
+// when nobody wants to wire up a provider.
+type SMTP struct {
+	Host     string
+	Port     int32
+	Username string
+	Password string
+	// From is what recipients see. Providers reject a From they have not
+	// verified, and Gmail rewrites it to the authenticated account anyway.
+	From     string
+	FromName string
+}
+
+// Configured reports whether real email can be sent.
+func (s SMTP) Configured() bool { return s.Host != "" }
 
 // RateLimit bounds how often a caller may act. In-process today, so limits are
 // per replica: two replicas means twice the real ceiling.
@@ -173,6 +191,14 @@ func Load(getenv func(string) string) (Config, error) {
 			MinVersionAndroid: p.str(getenv, "MIN_CLIENT_VERSION_ANDROID", ""),
 			UpgradeMessage:    p.str(getenv, "CLIENT_UPGRADE_MESSAGE", "Please update the app to continue."),
 		},
+		SMTP: SMTP{
+			Host:     p.str(getenv, "SMTP_HOST", ""),
+			Port:     p.int32(getenv, "SMTP_PORT", 587),
+			Username: p.str(getenv, "SMTP_USERNAME", ""),
+			Password: p.str(getenv, "SMTP_PASSWORD", ""),
+			From:     p.str(getenv, "SMTP_FROM", ""),
+			FromName: p.str(getenv, "SMTP_FROM_NAME", "go-api-starter"),
+		},
 		Google: Google{
 			ClientID:         p.str(getenv, "GOOGLE_CLIENT_ID", ""),
 			ClientSecret:     p.str(getenv, "GOOGLE_CLIENT_SECRET", ""),
@@ -207,6 +233,20 @@ func (c Config) validate(p *parser) {
 	if c.Auth.JWTSecret != "" && len(c.Auth.JWTSecret) < minJWTSecretLen {
 		p.add(fmt.Errorf("JWT_SECRET: %d characters, need at least %d",
 			len(c.Auth.JWTSecret), minJWTSecretLen))
+	}
+
+	// Half-configured is worse than not configured: it looks like mail works
+	// until the first person registers and never receives anything.
+	if c.SMTP.Host != "" {
+		if c.SMTP.Username == "" {
+			p.add(errors.New("SMTP_USERNAME: required when SMTP_HOST is set"))
+		}
+		if c.SMTP.Password == "" {
+			p.add(errors.New("SMTP_PASSWORD: required when SMTP_HOST is set"))
+		}
+		if c.SMTP.From == "" {
+			p.add(errors.New("SMTP_FROM: required when SMTP_HOST is set"))
+		}
 	}
 
 	// Half-configured is worse than not configured: it looks like SSO works

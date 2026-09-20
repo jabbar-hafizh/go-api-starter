@@ -1,0 +1,8 @@
+Confirm your email
+
+You created an account with this address. Confirm it to finish signing up:
+
+{{ .Link }}
+
+The link stops working in {{ .ExpiresIn }}. If you did not create this account,
+ignore this message and nothing happens.

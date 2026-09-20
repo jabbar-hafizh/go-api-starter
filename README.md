@@ -71,6 +71,7 @@ The ones worth knowing:
 | `RATE_LIMIT_*` | on | In-process, so per replica |
 | `VALIDATE_SPEC` | `true` locally | Checks every request against the spec. Refused in production |
 | `GOOGLE_CLIENT_ID` etc. | — | Optional. Empty means the Google endpoints answer 501 and everything else works |
+| `SMTP_HOST` etc. | — | Optional. Empty means verification tokens go to the log instead of being sent |
 | `MIN_CLIENT_VERSION_IOS` / `_ANDROID` | — | Empty disables the force-upgrade check |
 
 `.env` is gitignored and excluded from the Docker build context, so secrets
@@ -88,6 +89,34 @@ http://localhost:8080/v1/auth/google/callback
 Scopes are `openid`, `email`, `profile`, all non-sensitive, so no Google
 verification review is needed. Put the client ID, secret and redirect URL in
 `.env`. On boot the log says `google sso enabled` once discovery succeeds.
+
+### Email
+
+Leave `SMTP_HOST` empty and the verification token is written to the log
+instead of sent, which is enough for local work:
+
+```bash
+docker compose logs api | grep "email not sent"
+```
+
+Set it and real mail goes out. Any SMTP server works, since the sender is
+provider neutral:
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=you@gmail.com
+SMTP_PASSWORD=<16-character app password>
+SMTP_FROM=you@gmail.com
+```
+
+For Gmail that password is an **app password** from
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords),
+not the account password, and the account needs two-factor authentication for
+the option to appear. Note what you are accepting: Google caps sending at
+roughly 500 a day, marks unfamiliar senders as spam readily, and an app
+password is a credential for the whole Google account rather than for one
+service. It is fine for trying things out.
 
 #### Trying it
 
@@ -228,8 +257,15 @@ Written down rather than discovered later:
   Google identity and a 7-day web session. But signature, issuer, audience and
   expiry checks have no automated coverage. Every other part of the auth design
   is tested, including the account-takeover case.
-- **No email is actually sent.** `mailer.Log` writes the token to the log. The
-  interface is in place for a real sender.
+- **The verification link needs a front end.** It points at
+  `APP_BASE_URL/verify-email?token=...`, a page that then POSTs to the API. It
+  does *not* point at the API directly, because mail scanners and link previews
+  fetch every URL in a message and would burn the single-use token before the
+  recipient clicked. Until that page exists, copy the token out of the email by
+  hand.
+- **There is no way to resend a verification email.** A token lasts 24 hours.
+  After that the account cannot register again (409) and cannot sign in (403),
+  with no way to ask for a new one.
 - **Rate limits are in-process**, so they are enforced per replica. Two replicas
   means twice the real ceiling. `ratelimit.Limiter` is the seam for a shared
   store.

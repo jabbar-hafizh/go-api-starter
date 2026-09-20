@@ -604,6 +604,37 @@ answer in milliseconds while wrong passwords take tens of them.
 
 ---
 
+## Email
+
+### SMTP, not a provider SDK
+
+**Why.** The same code talks to Mailpit, Gmail, Resend or SES with nothing but
+environment variables changing. Binding to one provider's HTTP API would buy
+webhooks and delivery reporting at the cost of a rewrite to move. That is the
+same reasoning as `Provider` for identity providers.
+
+Sending is separated from rendering so a message can be built and asserted on
+without an SMTP server, which is what the tests do: they parse the MIME output
+and decode each part the way a mail client would.
+
+*Weight: ours.*
+
+### The link points at the front end, never at this API
+
+`APP_BASE_URL/verify-email?token=...`, and that page POSTs to the API.
+
+**Why.** A link in an email is fetched before anyone clicks it. Mail scanners,
+antivirus and link previews in chat apps all do it. Verification tokens are
+single use, so an API endpoint that consumed one on GET would be burned by a
+scanner, and the recipient would be told their link was already used. A front
+end page is safe to prefetch: it only loads, and the POST happens when a person
+actually acts.
+
+This is also why there is no `GET /v1/auth/verify-email`, however convenient it
+would be while there is no front end.
+
+*Weight: ours, standard practice.*
+
 ## HTTP
 
 ### CORS is an exact allowlist

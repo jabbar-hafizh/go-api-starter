@@ -164,10 +164,15 @@ func Run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 func buildServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (components, error) {
 	signer := token.NewHS256([]byte(cfg.Auth.JWTSecret), cfg.Auth.JWTKeyID, cfg.Auth.AccessTokenTTL)
 
+	sender, err := newMailer(cfg, logger)
+	if err != nil {
+		return components{}, err
+	}
+
 	authSvc := auth.NewService(
 		auth.NewPostgresStore(pool),
 		signer,
-		mailer.NewLog(),
+		sender,
 		auth.Config{
 			EmailTokenTTL:    cfg.Auth.EmailTokenTTL,
 			RefreshTTLWeb:    cfg.Auth.RefreshTokenTTLWeb,
@@ -233,6 +238,35 @@ func startSweeper(ctx context.Context, svc *auth.Service, logger *slog.Logger) {
 			}
 		}
 	}()
+}
+
+// newMailer returns a real sender when SMTP is configured and a logging one
+// otherwise, so the project still runs for someone who has not set up mail.
+func newMailer(cfg config.Config, logger *slog.Logger) (auth.Mailer, error) {
+	if !cfg.SMTP.Configured() {
+		logger.Warn("smtp not configured, verification tokens go to the log instead")
+		return mailer.NewLog(), nil
+	}
+
+	sender, err := mailer.NewSMTP(mailer.SMTPConfig{
+		Host:     cfg.SMTP.Host,
+		Port:     int(cfg.SMTP.Port),
+		Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password,
+		From:     cfg.SMTP.From,
+		FromName: cfg.SMTP.FromName,
+		BaseURL:  cfg.App.BaseURL,
+		LinkTTL:  cfg.Auth.EmailTokenTTL,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Info("smtp configured",
+		slog.String("host", cfg.SMTP.Host),
+		slog.String("from", cfg.SMTP.From),
+	)
+	return sender, nil
 }
 
 // loginLimiter bounds sign-in attempts per email. Disabled means no ceiling at
