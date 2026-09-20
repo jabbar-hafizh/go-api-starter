@@ -482,6 +482,27 @@ history and `Referer` headers; the app calls `/v1/auth/refresh` instead.
 
 *Weight: ours, standard practice.*
 
+### A refresh is answered on the transport it arrived on
+
+A token presented in the cookie is answered with a cookie. One presented in the
+body is answered in the body. The platform header only decides this at login,
+where nothing has been presented yet.
+
+**Why.** This was originally decided from `X-Client-Platform`, and the header is
+optional. A browser that omitted it got its new refresh token in the response
+body and no fresh cookie, so it kept presenting the spent one. The next refresh
+was then indistinguishable from a replay, reuse detection fired, and the whole
+chain was revoked. The user was signed out for doing nothing wrong.
+
+Forgetting one optional header should not be able to do that. How the token
+arrived already says how the client wants it back, and unlike a header it
+cannot be left out.
+
+A cookie also implies a browser, so the session takes the shorter web lifetime
+regardless of what the header claims.
+
+*Weight: ours, from a real failure found by using it.*
+
 ### Authorization Code with PKCE, never implicit
 
 **Why.** RFC 9700 §2.1.1: public clients *"MUST use PKCE"*, and for confidential

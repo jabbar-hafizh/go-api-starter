@@ -67,7 +67,7 @@ func (h *Handler) SignInWithProviderToken(ctx context.Context, req openapi.SignI
 	if err != nil {
 		return nil, err
 	}
-	return h.sessionResponse(session, platform), nil
+	return h.sessionResponse(session, platform.IsWeb()), nil
 }
 
 func (h *Handler) ListIdentities(ctx context.Context, _ openapi.ListIdentitiesRequestObject) (openapi.ListIdentitiesResponseObject, error) {

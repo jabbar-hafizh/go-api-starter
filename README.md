@@ -246,6 +246,27 @@ make cover       # coverage, excluding generated code
 
 ---
 
+## Dev console
+
+`http://localhost:8080/dev`, local only.
+
+Two things here end in a browser redirect rather than a response body: provider
+sign-in, and the link in a verification email. Without somewhere to land,
+exercising either means reading cookies out of developer tools by hand. This
+page stands in for the front end until there is one: sign in with Google, see
+the session and the access token, call the calculator with it, and confirm an
+email token when one arrives in the URL.
+
+It also demonstrates what a real client has to do, including single-flighting
+the refresh call. Three parallel refreshes with the same token look like a
+replay to the server, and reuse detection will end the session.
+
+Point `APP_BASE_URL` at it while there is no front end:
+
+```bash
+APP_BASE_URL=http://localhost:8080/dev
+```
+
 ## Known gaps
 
 Written down rather than discovered later:

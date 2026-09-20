@@ -22,6 +22,7 @@ import (
 	"github.com/jabbar-hafizh/go-api-starter/internal/calculator"
 	"github.com/jabbar-hafizh/go-api-starter/internal/config"
 	"github.com/jabbar-hafizh/go-api-starter/internal/db"
+	"github.com/jabbar-hafizh/go-api-starter/internal/devconsole"
 	"github.com/jabbar-hafizh/go-api-starter/internal/health"
 	"github.com/jabbar-hafizh/go-api-starter/internal/httperr"
 	"github.com/jabbar-hafizh/go-api-starter/internal/mailer"
@@ -51,6 +52,7 @@ var publicPaths = map[string]struct{}{
 	// how it is itself served.
 	apidocs.SpecPath: {},
 	apidocs.UIPath:   {},
+	devconsole.Path:  {},
 }
 
 // publicPatterns covers the routes that carry a path parameter. Written as the
@@ -306,6 +308,11 @@ func newHTTPServer(cfg config.Config, srv openapi.StrictServerInterface, verifie
 	}
 	apidocs.Register(mux, spec)
 
+	// Local only. It is a stand-in for the front end, not part of the API.
+	if cfg.App.Env == config.EnvLocal {
+		devconsole.Register(mux)
+	}
+
 	// Order matters and reads outermost first: an id exists before anything is
 	// logged, a panic anywhere inside is caught, the body is capped before it
 	// is read, and authentication runs last so rate limiting protects it too.
@@ -323,7 +330,7 @@ func newHTTPServer(cfg config.Config, srv openapi.StrictServerInterface, verifie
 		// Placed after the body limit and before authentication, so it sees the
 		// request as the handler will.
 		middlewares = append(middlewares,
-			middleware.ValidateSpec(spec, apidocs.SpecPath, apidocs.UIPath))
+			middleware.ValidateSpec(spec, apidocs.SpecPath, apidocs.UIPath, devconsole.Path))
 	}
 	if cfg.RateLimit.Enabled {
 		middlewares = append(middlewares,

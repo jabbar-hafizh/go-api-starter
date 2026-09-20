@@ -55,22 +55,49 @@ func (h *Handler) LoginUser(ctx context.Context, req openapi.LoginUserRequestObj
 	if err != nil {
 		return nil, err
 	}
-	return h.sessionResponse(session, platform), nil
+	// Nothing was presented here, so the header is all there is to go on.
+	return h.sessionResponse(session, platform.IsWeb()), nil
 }
 
 func (h *Handler) RefreshSession(ctx context.Context, req openapi.RefreshSessionRequestObject) (openapi.RefreshSessionResponseObject, error) {
-	platform := platformOf((*string)(req.Params.XClientPlatform))
+	presented, fromCookie := presentedRefreshToken(
+		(*string)(req.Params.RefreshToken), bodyRefreshToken(req.Body))
 
-	presented := (*string)(req.Params.RefreshToken)
-	if req.Body != nil && req.Body.RefreshToken != nil {
-		presented = req.Body.RefreshToken
+	platform := platformOf((*string)(req.Params.XClientPlatform))
+	if fromCookie {
+		// A cookie means a browser, whatever the header says.
+		platform = PlatformWeb
 	}
 
-	session, err := h.svc.Refresh(ctx, deref(presented), platform)
+	session, err := h.svc.Refresh(ctx, presented, platform)
 	if err != nil {
 		return nil, err
 	}
-	return h.sessionResponse(session, platform), nil
+
+	// Answered the way it was asked. Deciding this from the platform header
+	// instead would mean a browser that omits the header gets its new token in
+	// the body and no fresh cookie, so it would keep presenting the spent one
+	// and trip reuse detection on the very next call.
+	return h.sessionResponse(session, fromCookie), nil
+}
+
+// presentedRefreshToken reports the token and where it came from. A body value
+// wins, because sending one is explicit.
+func presentedRefreshToken(cookie, body *string) (token string, fromCookie bool) {
+	if body != nil && *body != "" {
+		return *body, false
+	}
+	if cookie != nil && *cookie != "" {
+		return *cookie, true
+	}
+	return "", false
+}
+
+func bodyRefreshToken(body *openapi.RefreshSessionJSONRequestBody) *string {
+	if body == nil {
+		return nil
+	}
+	return body.RefreshToken
 }
 
 func (h *Handler) Logout(ctx context.Context, req openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
@@ -119,16 +146,17 @@ func (h *Handler) GetMe(ctx context.Context, _ openapi.GetMeRequestObject) (open
 	}, nil
 }
 
-// sessionResponse decides where the refresh token goes. Web gets a cookie and
-// nothing in the body; everyone else gets it in the body and no cookie.
-func (h *Handler) sessionResponse(s Session, p Platform) sessionJSONResponse {
+// sessionResponse puts the refresh token in a cookie or in the body, never
+// both. A browser must not be able to read it, and a native client has no
+// cookie jar to read it from.
+func (h *Handler) sessionResponse(s Session, asCookie bool) sessionJSONResponse {
 	body := openapi.TokenPair{
 		AccessToken: s.Access.Value,
 		TokenType:   openapi.Bearer,
 		ExpiresIn:   int(s.Access.ExpiresIn.Seconds()),
 	}
 
-	if p.IsWeb() {
+	if asCookie {
 		return sessionJSONResponse{
 			body:   body,
 			cookie: newRefreshCookie(s.RefreshToken, s.RefreshTTL, h.secureCookies),

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>go-api-starter dev console</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --card:#171a21; --line:#272b35;
+          --fg:#e6e8ee; --dim:#8b91a1; --ok:#3fb950; --bad:#f85149; --acc:#4493f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 16px; background:var(--bg); color:var(--fg);
+         font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  main { max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:20px; }
+  h1 { font-size:20px; margin:0; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  .sub { color:var(--dim); font-size:13px; margin:4px 0 0; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:6px;
+           padding:9px 16px; font-size:14px; font-weight:500; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button:disabled { opacity:.5; cursor:default; }
+  pre { background:#0b0d11; border:1px solid var(--line); border-radius:6px; padding:12px;
+        overflow:auto; font-size:12px; margin:12px 0 0; white-space:pre-wrap; word-break:break-all; }
+  input, select { background:#0b0d11; border:1px solid var(--line); color:var(--fg);
+                  border-radius:6px; padding:8px 10px; font-size:14px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:12px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); }
+  .ok { color:var(--ok); border-color:var(--ok); }
+  .bad { color:var(--bad); border-color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>go-api-starter dev console</h1>
+    <p class="sub">Stands in for the front end until there is one. Local only.</p>
+  </div>
+
+  <section>
+    <h2>Session <span id="state" class="pill">checking</span></h2>
+    <p class="sub" id="who"></p>
+    <div class="row" style="margin-top:12px">
+      <button id="google">Sign in with Google</button>
+      <button id="refresh" class="ghost">Refresh</button>
+      <button id="copy" class="ghost" disabled>Copy access token</button>
+      <button id="logout" class="ghost">Log out</button>
+    </div>
+    <pre id="token">No access token yet.</pre>
+  </section>
+
+  <section>
+    <h2>Calculator</h2>
+    <p class="sub">Uses the access token above. This is the whole point: a Google-only account calling an authenticated endpoint.</p>
+    <div class="row" style="margin-top:12px">
+      <input id="a" value="0.1" size="10" />
+      <select id="op">
+        <option value="add">+</option>
+        <option value="subtract">−</option>
+        <option value="multiply">×</option>
+        <option value="divide">÷</option>
+      </select>
+      <input id="b" value="0.2" size="10" />
+      <button id="calc">Calculate</button>
+    </div>
+    <pre id="result">—</pre>
+  </section>
+
+  <section id="verify" hidden>
+    <h2>Email verification</h2>
+    <p class="sub">A token arrived in the URL, so this page posted it for you.</p>
+    <pre id="verifyOut">—</pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let accessToken = null;
+
+function setState(text, good) {
+  const el = $("state");
+  el.textContent = text;
+  el.className = "pill " + (good ? "ok" : "bad");
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    method: "POST",
+    // The server answers a refresh the way it was asked, so a cookie session
+    // stays a cookie session even without this. Sent anyway because it is what
+    // a real browser client should do, and it decides the session lifetime.
+    headers: {
+      "Content-Type": "application/json",
+      "X-Client-Platform": "web",
+      ...(options.headers || {}),
+    },
+    body: options.body,
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+  return { res, json, text };
+}
+
+// Single flight. Three parallel calls with the same refresh token look like
+// reuse to the server, which revokes the whole chain and signs you out. Any
+// real client needs this too.
+let inflight = null;
+function refreshSession() {
+  inflight ??= api("/v1/auth/refresh").finally(() => { inflight = null; });
+  return inflight;
+}
+
+async function loadSession() {
+  setState("checking", true);
+  const { res, json } = await refreshSession();
+
+  if (!res.ok) {
+    accessToken = null;
+    setState("signed out", false);
+    $("who").textContent = "";
+    $("token").textContent =
+      "No session. Sign in with Google, or the refresh cookie has expired.\n\n" +
+      "HTTP " + res.status + (json ? " " + json.code : "");
+    $("copy").disabled = true;
+    return;
+  }
+
+  accessToken = json.access_token;
+  setState("signed in", true);
+  $("token").textContent = accessToken;
+  $("copy").disabled = false;
+
+  const me = await fetch("/v1/me", { headers: { Authorization: "Bearer " + accessToken } });
+  if (me.ok) {
+    const user = await me.json();
+    const via = user.auth_methods.identities.map((i) => i.provider).join(", ") || "password";
+    $("who").textContent = user.email + " · signed in with " + via;
+  }
+}
+
+$("google").onclick = () => { window.location = "/v1/auth/google/start"; };
+$("refresh").onclick = loadSession;
+$("logout").onclick = async () => { await api("/v1/auth/logout"); await loadSession(); };
+$("copy").onclick = async () => {
+  await navigator.clipboard.writeText(accessToken);
+  $("copy").textContent = "Copied";
+  setTimeout(() => ($("copy").textContent = "Copy access token"), 1200);
+};
+
+$("calc").onclick = async () => {
+  if (!accessToken) { $("result").textContent = "Sign in first."; return; }
+
+  const body = JSON.stringify({ operation: $("op").value, a: $("a").value, b: $("b").value });
+  let { res, json, text } = await api("/v1/calculations", {
+    headers: { Authorization: "Bearer " + accessToken },
+    body,
+  });
+
+  // An access token lives fifteen minutes. On 401 a client refreshes once and
+  // retries, rather than dumping the user back at sign-in.
+  if (res.status === 401) {
+    await loadSession();
+    if (accessToken) {
+      ({ res, json, text } = await api("/v1/calculations", {
+        headers: { Authorization: "Bearer " + accessToken },
+        body,
+      }));
+    }
+  }
+
+  $("result").textContent = "HTTP " + res.status + "\n" + (json ? JSON.stringify(json, null, 2) : text);
+};
+
+// The link in a verification email lands here. The token is only posted from
+// this page, never consumed by the GET itself: mail scanners fetch every URL
+// in a message, and a GET that spent the token would be burned before anyone
+// clicked.
+(async () => {
+  const token = new URLSearchParams(location.search).get("token");
+  if (token) {
+    $("verify").hidden = false;
+    const { res, json } = await api("/v1/auth/verify-email", { body: JSON.stringify({ token }) });
+    $("verifyOut").textContent = res.status === 204
+      ? "Verified. You can sign in now."
+      : "HTTP " + res.status + "\n" + JSON.stringify(json, null, 2);
+  }
+  await loadSession();
+})();
+</script>
+</body>
+</html>
