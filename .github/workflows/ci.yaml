@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # oasdiff compares the spec against main, so it needs history.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generated code must be in sync
+        # Catches "forgot to run make generate" before it reaches main.
+        run: |
+          go tool sqlc diff
+          go tool oapi-codegen -config oapi.yaml docs/openapi.yaml
+          git diff --exit-code -- internal/openapi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  contract:
+    name: API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Lint the spec
+        uses: docker://redocly/cli:latest
+        with:
+          args: lint docs/openapi.yaml
+
+      - name: Reject breaking changes
+        # Old mobile builds live on devices for months and cannot be forced
+        # to update, so v1 is additive only.
+        if: github.event_name == 'pull_request'
+        uses: oasdiff/oasdiff-action/breaking@main
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          revision: ${{ github.event.pull_request.head.sha }}
+          fail-on: ERR

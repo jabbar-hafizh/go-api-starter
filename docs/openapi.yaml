@@ -1,0 +1,120 @@
+openapi: 3.0.3
+
+info:
+  title: go-api-starter
+  version: 1.0.0
+  description: |
+    This contract is the source of truth. Handlers are generated from it, so an
+    implementation that does not match will not compile.
+
+    COMPATIBILITY RULES (v1):
+      - Additive only. Removing a field, changing a type, or making a field
+        required is breaking and CI rejects it (oasdiff).
+      - The `code` value on Error is a public contract. Once a client uses it,
+        it never changes.
+      - Clients MUST tolerate enum values they do not recognise.
+
+servers:
+  - url: http://localhost:8080
+    description: local
+
+tags:
+  - name: health
+    description: Liveness and readiness
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      description: Returns 200 while the process is alive. Touches no dependency.
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: Returns 200 only when every dependency is ready to serve traffic.
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+        "503":
+          description: A dependency is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ReadinessStatus:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadinessCheck"
+
+    ReadinessCheck:
+      type: object
+      required: [name, ok]
+      properties:
+        name:
+          type: string
+          example: postgres
+        ok:
+          type: boolean
+        error:
+          type: string
+          description: Set only when ok=false. Never carries internal detail.
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Stable code for clients to branch on. Never changes once released.
+          example: ERR_AUTH_INVALID_CREDENTIALS
+        message:
+          type: string
+          description: Human-readable. NOT a contract, may change at any time.
+        details:
+          type: array
+          description: Per-field errors, for validation failures.
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+
+    ErrorDetail:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string

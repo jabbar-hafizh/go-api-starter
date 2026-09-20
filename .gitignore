@@ -1,0 +1,18 @@
+# Binary
+/bin/
+/tmp/
+
+# Env
+.env
+.env.local
+
+# Test & coverage
+coverage.out
+coverage.html
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+*.swp
